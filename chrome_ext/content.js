@@ -81,11 +81,11 @@
                 if (!dataToUse || dataToUse.length === 0) {
                     console.log("未解析数据文件，默认连续上传 5 张测试图片");
                     dataToUse = [
-                        { color: '红色', size: 'S', code: 'C01', imageName: 'D:\\\\myCoding\\\\skuAdd\\\\test_images\\\\red_s.jpg' },
-                        { color: '蓝色', size: 'S', code: 'C02', imageName: 'D:\\\\myCoding\\\\skuAdd\\\\test_images\\\\blue_s.jpg' },
-                        { color: '黑色', size: 'M', code: 'C03', imageName: 'D:\\\\myCoding\\\\skuAdd\\\\test_images\\\\black_m.jpg' },
-                        { color: '绿色', size: 'S', code: 'C04', imageName: 'D:\\\\myCoding\\\\skuAdd\\\\test_images\\\\green_s.jpg' },
-                        { color: '黄色', size: 'S', code: 'C05', imageName: 'D:\\\\myCoding\\\\skuAdd\\\\test_images\\\\yellow_s.jpg' }
+                        { color: '红色', size: 'S', code: 'C01', imageName: 'D:\\myCoding\\skuAddBatch\\test_images\\red_s.jpg' },
+                        { color: '蓝色', size: 'S', code: 'C02', imageName: 'D:\\myCoding\\skuAddBatch\\test_images\\blue_s.jpg' },
+                        { color: '黑色', size: 'M', code: 'C03', imageName: 'D:\\myCoding\\skuAddBatch\\test_images\\black_m.jpg' },
+                        { color: '绿色', size: 'S', code: 'C04', imageName: 'D:\\myCoding\\skuAddBatch\\test_images\\green_s.jpg' },
+                        { color: '黄色', size: 'S', code: 'C05', imageName: 'D:\\myCoding\\skuAddBatch\\test_images\\yellow_s.jpg' }
                     ];
                 }
 
@@ -116,6 +116,82 @@
         });
     }
 
+    async function uploadAllProductImages() {
+        if (!skuMetadata.baseDir || !skuMetadata.productDir || !skuMetadata.detailDir) {
+            alert("⚠️ 请先选择有效的 txt 数据文件，以解析图片目录配置！");
+            return false;
+        }
+        
+        let cleanBase = skuMetadata.baseDir.replace(/\\/g, '/').replace(/\/$/, '');
+        
+        // 1. 获取主图
+        let mainImgUrl = `${cleanBase}/${skuMetadata.productDir}/${skuMetadata.mainImage}`;
+        
+        // 2. 获取 detail 文件夹下的图片
+        let detailDirPath = `${cleanBase}/${skuMetadata.productDir}/${skuMetadata.detailDir}`;
+        let dirUrl = 'http://localhost:31415/?path=' + encodeURIComponent(detailDirPath);
+        
+        let detailFiles = [];
+        try {
+            const res = await fetch(dirUrl);
+            if (res.ok) {
+                const contentType = res.headers.get("content-type");
+                if (contentType && contentType.indexOf("application/json") !== -1) {
+                    detailFiles = await res.json();
+                } else {
+                    console.warn("server.py 未返回 JSON 数组，请确保 server.py 已更新并支持目录读取。");
+                }
+            }
+        } catch (err) {
+            console.warn("读取详情图目录失败:", err);
+        }
+        
+        const filenames = [skuMetadata.mainImage, ...detailFiles];
+        
+        console.group("=== 即将批量上传的产品图片列表 ===");
+        for (let i = 0; i < filenames.length; i++) {
+            const name = filenames[i];
+            const fullPath = (i === 0) ? mainImgUrl : `${detailDirPath}/${name}`;
+            console.log(`[图片 ${i + 1}] 名称: ${name} | 本地路径: ${fullPath}`);
+        }
+        console.groupEnd();
+        
+        let files = [];
+        for (let i = 0; i < filenames.length; i++) {
+            const name = filenames[i];
+            const fullPath = (i === 0) ? mainImgUrl : `${detailDirPath}/${name}`;
+            const url = 'http://localhost:31415/?path=' + encodeURIComponent(fullPath);
+            try {
+                const res = await fetch(url);
+                if (res.ok) {
+                    const blob = await res.blob();
+                    files.push(new File([blob], name, { type: blob.type || 'image/jpeg' }));
+                } else {
+                    console.warn("未能获取图片: " + fullPath);
+                }
+            } catch (err) {
+                console.warn("请求图片失败: " + fullPath, err);
+            }
+        }
+        
+        if (files.length === 0) {
+            alert("⚠️ 未能从本地服务获取到任何产品图片！");
+            return false;
+        }
+        
+        const productImgContainer = document.querySelector('.product-picture-list') || document.querySelector('.picture-draggable-list') || document.body;
+        document.getElementById('sku-status').innerHTML = `🖼️ 正在一次性上传 ${files.length} 张产品图片...`;
+        
+        const success = await uploadToProductArea(productImgContainer, files);
+        
+        if (success) {
+            document.getElementById('sku-status').innerHTML = `✅ 产品图片批量上传完成！已发送 ${files.length} 张图片`;
+        } else {
+            document.getElementById('sku-status').innerHTML = `❌ 产品图片批量上传失败`;
+        }
+        return success;
+    }
+
     const btnUploadProduct = panel.querySelector('#btn-upload-product-images');
     if (btnUploadProduct) {
         btnUploadProduct.addEventListener('click', async function() {
@@ -125,60 +201,7 @@
             btn.textContent = "正在自动获取并批量上传产品图片...";
             
             try {
-                // 根据需求，自动从本地服务获取特定图片，免除手动选择
-                const basePath = "/Users/gx/Desktop/mypro/skuAddBatch/test_images/";
-                // 1张黑色的（固定为第一张），后边4张从其他颜色中随机选取
-                const allOtherImages = [
-                    "blue_l.jpg", "blue_m.jpg", "blue_s.jpg",
-                    "green_l.jpg", "green_m.jpg", "green_s.jpg",
-                    "red_l.jpg", "red_m.jpg", "red_s.jpg",
-                    "white_l.jpg", "white_m.jpg", "white_s.jpg",
-                    "yellow_l.jpg", "yellow_m.jpg", "yellow_s.jpg"
-                ];
-                
-                // 随机打乱数组并取前 4 个
-                const shuffled = allOtherImages.sort(() => 0.5 - Math.random());
-                const selectedOthers = shuffled.slice(0, 4);
-                
-                const filenames = ["black_l copy.jpg", ...selectedOthers];
-                
-                let files = [];
-                for (let name of filenames) {
-                    const fullPath = basePath + name;
-                    const url = 'http://localhost:31415/?path=' + encodeURIComponent(fullPath);
-                    try {
-                        const res = await fetch(url);
-                        if (res.ok) {
-                            const blob = await res.blob();
-                            files.push(new File([blob], name, { type: blob.type || 'image/jpeg' }));
-                        } else {
-                            console.warn("未能获取图片: " + name);
-                        }
-                    } catch (err) {
-                        console.warn("请求图片失败: " + name, err);
-                    }
-                }
-                
-                if (files.length === 0) {
-                    alert("⚠️ 未能从本地服务(http://localhost:31415)获取到任何图片，请确保服务已启动且图片存在！");
-                    btn.textContent = originalText;
-                    btn.disabled = false;
-                    return;
-                }
-                
-                const productImgContainer = document.querySelector('.product-picture-list') || document.querySelector('.picture-draggable-list') || document.body;
-                
-                document.getElementById('sku-status').innerHTML = `🖼️ 正在一次性上传 ${files.length} 张产品图片...`;
-                
-                const success = await uploadToProductArea(productImgContainer, files);
-                
-                if (success) {
-                    document.getElementById('sku-status').innerHTML = `✅ 产品图片批量上传完成！已发送 ${files.length} 张图片`;
-                    alert(`✅ 成功一次性上传了 ${files.length} 张产品图片！`);
-                } else {
-                    document.getElementById('sku-status').innerHTML = `❌ 产品图片批量上传失败`;
-                }
-                
+                await uploadAllProductImages();
             } catch(e) {
                 console.error("产品图片批量上传出错", e);
                 alert("产品图片上传出错: " + e.message);
@@ -194,9 +217,23 @@
         files.forEach(file => { file.uid = Date.now() + Math.floor(Math.random() * 1000); });
         
         // 策略1：直接寻找页面上已存在的文件输入框进行注入
-        const existingInputs = Array.from(document.querySelectorAll('input[type="file"]')).filter(
+        let existingInputs = Array.from(container.querySelectorAll('input[type="file"]')).filter(
             i => i.id !== 'sku-file-input' && i.id !== 'sku-img-input'
         );
+        
+        // 如果局部没找到，且是在全局寻找产品图片输入框，则在全局找但排除 SKU 区域
+        if (existingInputs.length === 0) {
+            existingInputs = Array.from(document.querySelectorAll('input[type="file"]')).filter(
+                i => {
+                    if (i.id === 'sku-file-input' || i.id === 'sku-img-input') return false;
+                    // 如果当前是给变体传图(container包含'row')，则只允许在当前行找，全局的不算
+                    if (container && container.classList && container.classList.contains('pro-virtual-table__row')) return false;
+                    // 排除属于SKU变体图片的input
+                    if (i.closest('.picture-table-list') || i.closest('.sale-attribute-list')) return false;
+                    return true;
+                }
+            );
+        }
         
         if (existingInputs.length > 0) {
             // 优先找 multiple 的，或者处于 product 区域的
@@ -245,7 +282,7 @@
         
         const btn = uploadBtns[0];
         console.log("点击上传按钮触发文件框:", btn);
-        const interceptPromise = interceptFileInput(files, 4000);
+        const interceptPromise = interceptFileInput(files, 4000, scope);
         
         ['mousedown', 'mouseup', 'click'].forEach(evt => {
             btn.dispatchEvent(new MouseEvent(evt, { bubbles: true, cancelable: true, view: window }));
@@ -284,6 +321,15 @@
     // 全局图片文件存储
     let selectedImageFiles = {};
 
+    let skuMetadata = {
+        baseDir: '',
+        productDir: '',
+        mainImage: '',
+        detailDir: '',
+        skuDir: '',
+        header: []
+    };
+
     // 当前待上传的文件引用（供上传流程内部使用）
     let targetFileForUpload = null;
 
@@ -300,6 +346,12 @@
     }
 
     function resolveImagePath(imagePathStr, color, size) {
+        if (skuMetadata.baseDir && skuMetadata.productDir && skuMetadata.skuDir) {
+            let cleanBase = skuMetadata.baseDir.replace(/\\/g, '/').replace(/\/$/, '');
+            let cleanImageName = imagePathStr || getExpectedFilename(color, size);
+            return `${cleanBase}/${skuMetadata.productDir}/${skuMetadata.skuDir}/${cleanImageName}`;
+        }
+        
         const expected = getExpectedFilename(color, size);
         if (!imagePathStr) return expected;
         let clean = imagePathStr.replace(/\\/g, '/').trim();
@@ -358,7 +410,15 @@
         if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
             try {
                 const bgRes = await new Promise((resolve) => {
-                    chrome.runtime.sendMessage({ type: 'FETCH_IMAGE', path: fullPath }, (res) => resolve(res));
+                    const timeoutId = setTimeout(() => {
+                        console.warn("Background 获取图片超时，强制降级");
+                        resolve(null);
+                    }, 3000);
+                    
+                    chrome.runtime.sendMessage({ type: 'FETCH_IMAGE', path: fullPath }, (res) => {
+                        clearTimeout(timeoutId);
+                        resolve(res);
+                    });
                 });
                 if (bgRes && bgRes.success && bgRes.dataUrl) {
                     const res = await fetch(bgRes.dataUrl);
@@ -450,7 +510,7 @@
     // 拦截 Vue/React 动态创建的 input[type=file] 并注入文件。
     // 妙手平台点击上传按钮后，框架内部会创建 input[type=file] 并立即调用 .click()，
     // 然后移除该 input。我们需要在这个 input 出现的瞬间注入文件并触发 change。
-    function interceptFileInput(fileOrFiles, timeoutMs) {
+    function interceptFileInput(fileOrFiles, timeoutMs, scopeContainer = null) {
         const files = Array.isArray(fileOrFiles) ? fileOrFiles : [fileOrFiles];
         return new Promise((resolve) => {
             let resolved = false;
@@ -473,6 +533,17 @@
                             ? node
                             : node.querySelector && node.querySelector('input[type="file"]');
                         if (fileInput && fileInput.id !== 'sku-file-input' && fileInput.id !== 'sku-img-input') {
+                            // 如果规定了局部范围，且找到的 input 明显属于别的范围，我们可以跳过
+                            let row = null;
+                            if (scopeContainer && scopeContainer.closest) {
+                                row = scopeContainer.closest('.pro-virtual-table__row') || (scopeContainer.classList && scopeContainer.classList.contains('pro-virtual-table__row') ? scopeContainer : null);
+                            }
+                            if (row) {
+                                const iRow = fileInput.closest('.pro-virtual-table__row');
+                                if (iRow && iRow !== row) {
+                                    continue; // 明显属于其他行的 input，忽略
+                                }
+                            }
                             // 拦截到了！注入文件
                             injectFileToInput(fileInput, files);
                             finish(true, `已向动态创建的 input 注入 ${files.length} 个文件`);
@@ -484,16 +555,40 @@
             observer.observe(document.documentElement, { childList: true, subtree: true });
 
             const timer = setTimeout(() => {
-                // 超时降级：尝试在现有 input 中找目标
-                const existing = Array.from(document.querySelectorAll('input[type="file"]')).filter(
+                // 超时降级：尝试在范围(或现有 input)中找目标
+                let existing = Array.from(document.querySelectorAll('input[type="file"]')).filter(
                     i => i.id !== 'sku-file-input' && i.id !== 'sku-img-input'
                 );
+                
+                // 【核心修复】防止 SKU 上传越界到产品主图的输入框中
+                if (scopeContainer && scopeContainer.closest) {
+                    const row = scopeContainer.closest('.pro-virtual-table__row') || (scopeContainer.classList && scopeContainer.classList.contains('pro-virtual-table__row') ? scopeContainer : null);
+                    
+                    if (row) {
+                        // 如果是在 SKU 行中寻找
+                        const localInputs = existing.filter(i => i.closest('.pro-virtual-table__row') === row);
+                        if (localInputs.length > 0) {
+                            existing = localInputs;
+                        } else {
+                            // 行内没有输入框，说明 Vue 可能挂载在全局(body)。
+                            // 保留非其他行的全局输入框，且不能是明显属于主图区域的
+                            existing = existing.filter(i => {
+                                const iRow = i.closest('.pro-virtual-table__row');
+                                return !iRow || iRow === row; // 过滤掉属于【其他行】的 input
+                            });
+                        }
+                    } else {
+                        // 如果是在产品主图区域寻找，也要排除 SKU 区域
+                        existing = existing.filter(i => !i.closest('.picture-table-list') && !i.closest('.sale-attribute-list'));
+                    }
+                }
+
                 if (existing.length > 0) {
-                    const last = existing[existing.length - 1];
-                    injectFileToInput(last, files);
-                    finish(true, `超时降级：向最后一个现有 input 注入 ${files.length} 个文件`);
+                    const target = existing.find(i => i.multiple) || existing[existing.length - 1];
+                    injectFileToInput(target, files);
+                    finish(true, `超时降级：向现有 input 注入 ${files.length} 个文件`);
                 } else {
-                    finish(false, `超时 ${timeoutMs}ms 未捕获到 input[type=file]`);
+                    finish(false, `超时 ${timeoutMs}ms 未捕获到合法的 input[type=file]`);
                 }
             }, timeoutMs || 3000);
         });
@@ -501,8 +596,8 @@
 
     // 向 input 注入文件并触发 Vue/React 的 change 事件
     function injectFileToInput(input, fileOrFiles) {
+        const files = Array.isArray(fileOrFiles) ? fileOrFiles : [fileOrFiles];
         try {
-            const files = Array.isArray(fileOrFiles) ? fileOrFiles : [fileOrFiles];
             const dt = new DataTransfer();
             files.forEach(f => dt.items.add(f));
             // 直接赋值 files 属性
@@ -527,7 +622,7 @@
         if (parent) {
             parent.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
         }
-        console.log(`[文件注入] 已向 input 注入 ${file.name} 并触发事件`, input);
+        console.log(`[文件注入] 已向 input 注入 ${files.map(f => f.name).join(', ')} 并触发事件`, input);
     }
 
     async function uploadSingleSkuImage(item, rowIndex) {
@@ -581,7 +676,7 @@
 
             console.log(`找到 [${item.color}-${item.size}] ${typeName} 列的上传按钮，准备触发上传...`);
             const btn = uploadBtns[0];
-            const interceptPromise = interceptFileInput(file, 4000);
+            const interceptPromise = interceptFileInput(file, 4000, scope);
             
             targetFileForUpload = file;
             ['mousedown', 'mouseup', 'click'].forEach(evt => {
@@ -652,32 +747,45 @@
             let colorsSet = new Set();
             let sizesSet = new Set();
 
-            lines.forEach(line => {
-                let cleanLine = line.trim();
-                if (cleanLine.startsWith('"') && cleanLine.endsWith('"')) {
-                    cleanLine = cleanLine.substring(1, cleanLine.length - 1);
-                }
+            if (lines.length > 6) {
+                skuMetadata.baseDir = lines[0];
+                skuMetadata.productDir = lines[1];
+                skuMetadata.mainImage = lines[2];
+                skuMetadata.detailDir = lines[3];
+                skuMetadata.skuDir = lines[4];
+                skuMetadata.header = lines[5].split('"-"').map(s => s.replace(/"/g, ''));
                 
-                const parts = cleanLine.split('"-"');
-                if(parts.length >= 9) {
-                    let color = parts[0];
-                    let size = parts[1];
-                    parsedData.push({
-                        color: color,
-                        size: size,
-                        code: parts[2],
-                        price: parts[3],
-                        stock: parts[4],
-                        condition: parts[5],
-                        platformSku: parts[6],
-                        promoPrice: parts[7],
-                        promoTime: parts[8] || '', 
-                        imageName: parts[9] || '' // 第10列为图片名
-                    });
-                    colorsSet.add(color);
-                    sizesSet.add(size);
-                }
-            });
+                // 从第7行（索引为6）开始取数据
+                const dataLines = lines.slice(6);
+                dataLines.forEach(line => {
+                    let cleanLine = line.trim();
+                    if (cleanLine.startsWith('"') && cleanLine.endsWith('"')) {
+                        cleanLine = cleanLine.substring(1, cleanLine.length - 1);
+                    }
+                    
+                    const parts = cleanLine.split('"-"');
+                    if(parts.length >= 10) {
+                        let color = parts[1]; // 第2列是颜色
+                        let size = parts[2];  // 第3列是尺寸
+                        parsedData.push({
+                            imageName: parts[0],
+                            color: color,
+                            size: size,
+                            code: parts[3],
+                            price: parts[4],
+                            stock: parts[5],
+                            condition: parts[6],
+                            platformSku: parts[7],
+                            promoPrice: parts[8],
+                            promoTime: parts[9] || ''
+                        });
+                        colorsSet.add(color);
+                        sizesSet.add(size);
+                    }
+                });
+            } else {
+                alert('数据文件格式不正确，缺少前6行配置信息！');
+            }
 
             uniqueColors = Array.from(colorsSet);
             uniqueSizes = Array.from(sizesSet);
@@ -685,9 +793,14 @@
             document.getElementById('sku-status').innerHTML = 
                 `解析成功! 共 <b>${parsedData.length}</b> 行数据。<br>` +
                 `🎨 颜色 (${uniqueColors.length}): ${uniqueColors.join(', ')}<br>` +
-                `📏 尺寸 (${uniqueSizes.length}): ${uniqueSizes.join(', ')}`;
+                `📏 尺寸 (${uniqueSizes.length}): ${uniqueSizes.join(', ')}<br><b>🚀 正在全自动执行...</b>`;
                 
-            document.getElementById('btn-start-auto').disabled = false;
+            const autoBtn = document.getElementById('btn-start-auto');
+            if(autoBtn) {
+                autoBtn.disabled = false;
+                // 选完文件后，全程自动
+                setTimeout(() => autoBtn.click(), 500);
+            }
         };
         reader.readAsText(file);
     });
@@ -726,11 +839,11 @@
             if (!parsedData || parsedData.length === 0) {
                 console.log("未解析数据文件，默认连续上传 5 张测试图片");
                 parsedData = [
-                    { color: '红色', size: 'S', code: 'C01', imageName: 'D:\\myCoding\\skuAdd\\test_images\\red_s.jpg' },
-                    { color: '蓝色', size: 'S', code: 'C02', imageName: 'D:\\myCoding\\skuAdd\\test_images\\blue_s.jpg' },
-                    { color: '黑色', size: 'M', code: 'C03', imageName: 'D:\\myCoding\\skuAdd\\test_images\\black_m.jpg' },
-                    { color: '绿色', size: 'S', code: 'C04', imageName: 'D:\\myCoding\\skuAdd\\test_images\\green_s.jpg' },
-                    { color: '黄色', size: 'S', code: 'C05', imageName: 'D:\\myCoding\\skuAdd\\test_images\\yellow_s.jpg' }
+                    { color: '红色', size: 'S', code: 'C01', imageName: 'D:\\myCoding\\skuAddBatch\\test_images\\red_s.jpg' },
+                    { color: '蓝色', size: 'S', code: 'C02', imageName: 'D:\\myCoding\\skuAddBatch\\test_images\\blue_s.jpg' },
+                    { color: '黑色', size: 'M', code: 'C03', imageName: 'D:\\myCoding\\skuAddBatch\\test_images\\black_m.jpg' },
+                    { color: '绿色', size: 'S', code: 'C04', imageName: 'D:\\myCoding\\skuAddBatch\\test_images\\green_s.jpg' },
+                    { color: '黄色', size: 'S', code: 'C05', imageName: 'D:\\myCoding\\skuAddBatch\\test_images\\yellow_s.jpg' }
                 ];
                 let colorsSet = new Set(parsedData.map(d => d.color));
                 let sizesSet = new Set(parsedData.map(d => d.size));
@@ -844,14 +957,30 @@
                 await new Promise(r => setTimeout(r, 500));
             }
             
-            document.getElementById('sku-status').innerHTML = '步骤 4/4: 正在自动填充表格与上传图片...';
+            document.getElementById('sku-status').innerHTML = '步骤 4/6: 正在自动填充 SKU 文本数据...';
             await startFillingLogic();
+            
+            document.getElementById('sku-status').innerHTML = '步骤 5/6: 正在自动上传产品图片...';
+            await uploadAllProductImages();
+            
+            alert("✅ 产品主副图上传完毕！\n\n如果网页还在显示进度条，请等待图片全部出现。\n确认没问题后，点击【确定】继续进行第二步：挨个上传 SKU 变体图。");
+            
+            document.getElementById('sku-status').innerHTML = '步骤 6/6: 正在给各 SKU 变体上传主图...';
+            if (typeof uploadSingleSkuImage === 'function' && parsedData.length > 0) {
+                for (let i = 0; i < parsedData.length; i++) {
+                    const match = parsedData[i];
+                    if (match.imageName) {
+                        document.getElementById('sku-status').innerHTML = `步骤 6/6: 正在给 ${match.color}-${match.size} 上传图片 (${i+1}/${parsedData.length})...`;
+                        await uploadSingleSkuImage(match, i);
+                    }
+                }
+            }
             
             document.getElementById('sku-status').innerHTML = '✅ 全自动提效完成！';
             
         } catch (err) {
             console.error(err);
-            alert("发生异常，请检查控制台。");
+            document.getElementById('sku-status').innerHTML = '❌ 发生异常，请检查控制台。';
         } finally {
             btn.disabled = false;
             btn.textContent = "▶ 一键全自动执行 (变体 + 填充)";
@@ -966,16 +1095,7 @@
                         }
                     }
                     
-                    // ================= 新增：自动上传本行的图片与 Swatch =================
-                    if (typeof uploadSingleSkuImage === 'function' && match.imageName) {
-                        document.getElementById('sku-status').innerHTML = `步骤 4/4: 正在填充 ${match.color}-${match.size} 并上传图片...`;
-                        const matchIdx = parsedData.indexOf(match);
-                        await uploadSingleSkuImage(match, matchIdx);
-                        
-                        // Swatch Image: 目前依靠平台本身的同源逻辑或 `uploadSingleSkuImage` 扩展后续支持。
-                        // 如果有明确的 Swatch Button 也可以在 `uploadSingleSkuImage` 中统一处理。
-                    }
-                    // ================================================================
+                    // SKU 图片上传逻辑已移至外层主流程
 
                     currentBatchFilled++;
                     await new Promise(r => setTimeout(r, 100));
@@ -1031,7 +1151,7 @@
 
         //
         //
-        alert(`✅ 自动翻页扫描完毕！共成功匹配并填入了 ${totalFilled} 行数据！`);
+        console.log(`✅ 自动翻页扫描完毕！共成功匹配并填入了 ${totalFilled} 行数据！`);
     }
 
 })();

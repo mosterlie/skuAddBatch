@@ -79,11 +79,11 @@
                 if (!dataToUse || dataToUse.length === 0) {
                     console.log("未解析数据文件，默认连续上传 5 张测试图片");
                     dataToUse = [
-                        { color: '红色', size: 'S', code: 'C01', imageName: 'D:\\\\myCoding\\\\skuAdd\\\\test_images\\\\red_s.jpg' },
-                        { color: '蓝色', size: 'S', code: 'C02', imageName: 'D:\\\\myCoding\\\\skuAdd\\\\test_images\\\\blue_s.jpg' },
-                        { color: '黑色', size: 'M', code: 'C03', imageName: 'D:\\\\myCoding\\\\skuAdd\\\\test_images\\\\black_m.jpg' },
-                        { color: '绿色', size: 'S', code: 'C04', imageName: 'D:\\\\myCoding\\\\skuAdd\\\\test_images\\\\green_s.jpg' },
-                        { color: '黄色', size: 'S', code: 'C05', imageName: 'D:\\\\myCoding\\\\skuAdd\\\\test_images\\\\yellow_s.jpg' }
+                        { color: '红色', size: 'S', code: 'C01', imageName: 'D:\\\\myCoding\\\\skuAddBatch\\\\test_images\\\\red_s.jpg' },
+                        { color: '蓝色', size: 'S', code: 'C02', imageName: 'D:\\\\myCoding\\\\skuAddBatch\\\\test_images\\\\blue_s.jpg' },
+                        { color: '黑色', size: 'M', code: 'C03', imageName: 'D:\\\\myCoding\\\\skuAddBatch\\\\test_images\\\\black_m.jpg' },
+                        { color: '绿色', size: 'S', code: 'C04', imageName: 'D:\\\\myCoding\\\\skuAddBatch\\\\test_images\\\\green_s.jpg' },
+                        { color: '黄色', size: 'S', code: 'C05', imageName: 'D:\\\\myCoding\\\\skuAddBatch\\\\test_images\\\\yellow_s.jpg' }
                     ];
                 }
 
@@ -139,6 +139,15 @@
     // 全局图片文件存储
     let selectedImageFiles = {};
 
+    let skuMetadata = {
+        baseDir: '',
+        productDir: '',
+        mainImage: '',
+        detailDir: '',
+        skuDir: '',
+        header: []
+    };
+
     // 当前待上传的文件引用（供上传流程内部使用）
     let targetFileForUpload = null;
 
@@ -155,6 +164,12 @@
     }
 
     function resolveImagePath(imagePathStr, color, size) {
+        if (skuMetadata.baseDir && skuMetadata.productDir && skuMetadata.skuDir) {
+            let cleanBase = skuMetadata.baseDir.replace(/\\/g, '/').replace(/\/$/, '');
+            let cleanImageName = imagePathStr || getExpectedFilename(color, size);
+            return `${cleanBase}/${skuMetadata.productDir}/${skuMetadata.skuDir}/${cleanImageName}`;
+        }
+        
         const expected = getExpectedFilename(color, size);
         if (!imagePathStr) return expected;
         let clean = imagePathStr.replace(/\\/g, '/').trim();
@@ -492,32 +507,45 @@
             let colorsSet = new Set();
             let sizesSet = new Set();
 
-            lines.forEach(line => {
-                let cleanLine = line.trim();
-                if (cleanLine.startsWith('"') && cleanLine.endsWith('"')) {
-                    cleanLine = cleanLine.substring(1, cleanLine.length - 1);
-                }
+            if (lines.length > 6) {
+                skuMetadata.baseDir = lines[0];
+                skuMetadata.productDir = lines[1];
+                skuMetadata.mainImage = lines[2];
+                skuMetadata.detailDir = lines[3];
+                skuMetadata.skuDir = lines[4];
+                skuMetadata.header = lines[5].split('"-"').map(s => s.replace(/"/g, ''));
                 
-                const parts = cleanLine.split('"-"');
-                if(parts.length >= 9) {
-                    let color = parts[0];
-                    let size = parts[1];
-                    parsedData.push({
-                        color: color,
-                        size: size,
-                        code: parts[2],
-                        price: parts[3],
-                        stock: parts[4],
-                        condition: parts[5],
-                        platformSku: parts[6],
-                        promoPrice: parts[7],
-                        promoTime: parts[8] || '', 
-                        imageName: parts[9] || '' // 第10列为图片名
-                    });
-                    colorsSet.add(color);
-                    sizesSet.add(size);
-                }
-            });
+                // 从第7行（索引为6）开始取数据
+                const dataLines = lines.slice(6);
+                dataLines.forEach(line => {
+                    let cleanLine = line.trim();
+                    if (cleanLine.startsWith('"') && cleanLine.endsWith('"')) {
+                        cleanLine = cleanLine.substring(1, cleanLine.length - 1);
+                    }
+                    
+                    const parts = cleanLine.split('"-"');
+                    if(parts.length >= 10) {
+                        let color = parts[1]; // 第2列是颜色
+                        let size = parts[2];  // 第3列是尺寸
+                        parsedData.push({
+                            imageName: parts[0],
+                            color: color,
+                            size: size,
+                            code: parts[3],
+                            price: parts[4],
+                            stock: parts[5],
+                            condition: parts[6],
+                            platformSku: parts[7],
+                            promoPrice: parts[8],
+                            promoTime: parts[9] || ''
+                        });
+                        colorsSet.add(color);
+                        sizesSet.add(size);
+                    }
+                });
+            } else {
+                alert('数据文件格式不正确，缺少前6行配置信息！');
+            }
 
             uniqueColors = Array.from(colorsSet);
             uniqueSizes = Array.from(sizesSet);
@@ -566,11 +594,11 @@
             if (!parsedData || parsedData.length === 0) {
                 console.log("未解析数据文件，默认连续上传 5 张测试图片");
                 parsedData = [
-                    { color: '红色', size: 'S', code: 'C01', imageName: 'D:\\myCoding\\skuAdd\\test_images\\red_s.jpg' },
-                    { color: '蓝色', size: 'S', code: 'C02', imageName: 'D:\\myCoding\\skuAdd\\test_images\\blue_s.jpg' },
-                    { color: '黑色', size: 'M', code: 'C03', imageName: 'D:\\myCoding\\skuAdd\\test_images\\black_m.jpg' },
-                    { color: '绿色', size: 'S', code: 'C04', imageName: 'D:\\myCoding\\skuAdd\\test_images\\green_s.jpg' },
-                    { color: '黄色', size: 'S', code: 'C05', imageName: 'D:\\myCoding\\skuAdd\\test_images\\yellow_s.jpg' }
+                    { color: '红色', size: 'S', code: 'C01', imageName: 'D:\\myCoding\\skuAddBatch\\test_images\\red_s.jpg' },
+                    { color: '蓝色', size: 'S', code: 'C02', imageName: 'D:\\myCoding\\skuAddBatch\\test_images\\blue_s.jpg' },
+                    { color: '黑色', size: 'M', code: 'C03', imageName: 'D:\\myCoding\\skuAddBatch\\test_images\\black_m.jpg' },
+                    { color: '绿色', size: 'S', code: 'C04', imageName: 'D:\\myCoding\\skuAddBatch\\test_images\\green_s.jpg' },
+                    { color: '黄色', size: 'S', code: 'C05', imageName: 'D:\\myCoding\\skuAddBatch\\test_images\\yellow_s.jpg' }
                 ];
                 let colorsSet = new Set(parsedData.map(d => d.color));
                 let sizesSet = new Set(parsedData.map(d => d.size));
