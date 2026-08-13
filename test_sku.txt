@@ -1,1 +1,1 @@
-"红色"-"S"-"CODE001"-"19.99"-"100"-"新"-"SKU-R-S"-"15.99"-"2023-01-01至2023-12-31"-"D:\myCoding\skuAdd\test_images"
+"红色"-"S"-"CODE001"-"19.99"-"100"-"新"-"SKU-R-S"-"15.99"-"2023-01-01至2023-12-31"-"/Users/gx/Desktop/mypro/skuAddBatch/test_images/red_s.jpg"

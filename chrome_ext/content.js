@@ -47,6 +47,8 @@
         <button id="btn-start-auto" disabled style="padding: 10px 12px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: #fff; border: none; border-radius: 6px; cursor: pointer; width: 100%; font-weight: bold; font-size: 14px; box-shadow: 0 2px 6px rgba(16, 185, 129, 0.3); margin-bottom: 8px;">▶ 一键全自动执行 (变体 + 填充 + 图片)</button>
 
         <button id="btn-upload-images" style="padding: 9px 12px; background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%); color: #fff; border: none; border-radius: 6px; cursor: pointer; width: 100%; font-weight: bold; font-size: 13px; box-shadow: 0 2px 6px rgba(99, 102, 241, 0.3);">📷 自动上传 SKU 图片 (点击+号选本地图片)</button>
+        
+        <button id="btn-upload-product-images" style="padding: 9px 12px; margin-top: 8px; background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%); color: #fff; border: none; border-radius: 6px; cursor: pointer; width: 100%; font-weight: bold; font-size: 13px; box-shadow: 0 2px 6px rgba(14, 165, 233, 0.3);">🖼️ 批量上传产品图片 (点击+号选本地图片)</button>
     `;
     
     document.body.appendChild(panel);
@@ -114,6 +116,149 @@
         });
     }
 
+    const btnUploadProduct = panel.querySelector('#btn-upload-product-images');
+    if (btnUploadProduct) {
+        btnUploadProduct.addEventListener('click', async function() {
+            const btn = this;
+            btn.disabled = true;
+            const originalText = btn.textContent;
+            btn.textContent = "正在自动获取并批量上传产品图片...";
+            
+            try {
+                // 根据需求，自动从本地服务获取特定图片，免除手动选择
+                const basePath = "/Users/gx/Desktop/mypro/skuAddBatch/test_images/";
+                // 1张黑色的（固定为第一张），后边4张从其他颜色中随机选取
+                const allOtherImages = [
+                    "blue_l.jpg", "blue_m.jpg", "blue_s.jpg",
+                    "green_l.jpg", "green_m.jpg", "green_s.jpg",
+                    "red_l.jpg", "red_m.jpg", "red_s.jpg",
+                    "white_l.jpg", "white_m.jpg", "white_s.jpg",
+                    "yellow_l.jpg", "yellow_m.jpg", "yellow_s.jpg"
+                ];
+                
+                // 随机打乱数组并取前 4 个
+                const shuffled = allOtherImages.sort(() => 0.5 - Math.random());
+                const selectedOthers = shuffled.slice(0, 4);
+                
+                const filenames = ["black_l copy.jpg", ...selectedOthers];
+                
+                let files = [];
+                for (let name of filenames) {
+                    const fullPath = basePath + name;
+                    const url = 'http://localhost:31415/?path=' + encodeURIComponent(fullPath);
+                    try {
+                        const res = await fetch(url);
+                        if (res.ok) {
+                            const blob = await res.blob();
+                            files.push(new File([blob], name, { type: blob.type || 'image/jpeg' }));
+                        } else {
+                            console.warn("未能获取图片: " + name);
+                        }
+                    } catch (err) {
+                        console.warn("请求图片失败: " + name, err);
+                    }
+                }
+                
+                if (files.length === 0) {
+                    alert("⚠️ 未能从本地服务(http://localhost:31415)获取到任何图片，请确保服务已启动且图片存在！");
+                    btn.textContent = originalText;
+                    btn.disabled = false;
+                    return;
+                }
+                
+                const productImgContainer = document.querySelector('.product-picture-list') || document.querySelector('.picture-draggable-list') || document.body;
+                
+                document.getElementById('sku-status').innerHTML = `🖼️ 正在一次性上传 ${files.length} 张产品图片...`;
+                
+                const success = await uploadToProductArea(productImgContainer, files);
+                
+                if (success) {
+                    document.getElementById('sku-status').innerHTML = `✅ 产品图片批量上传完成！已发送 ${files.length} 张图片`;
+                    alert(`✅ 成功一次性上传了 ${files.length} 张产品图片！`);
+                } else {
+                    document.getElementById('sku-status').innerHTML = `❌ 产品图片批量上传失败`;
+                }
+                
+            } catch(e) {
+                console.error("产品图片批量上传出错", e);
+                alert("产品图片上传出错: " + e.message);
+            } finally {
+                btn.textContent = originalText;
+                btn.disabled = false;
+            }
+        });
+    }
+
+    async function uploadToProductArea(container, files) {
+        if (!Array.isArray(files)) files = [files];
+        files.forEach(file => { file.uid = Date.now() + Math.floor(Math.random() * 1000); });
+        
+        // 策略1：直接寻找页面上已存在的文件输入框进行注入
+        const existingInputs = Array.from(document.querySelectorAll('input[type="file"]')).filter(
+            i => i.id !== 'sku-file-input' && i.id !== 'sku-img-input'
+        );
+        
+        if (existingInputs.length > 0) {
+            // 优先找 multiple 的，或者处于 product 区域的
+            let targetInput = existingInputs.find(i => i.multiple) || existingInputs[0];
+            console.log("找到现有的文件输入框，直接注入", targetInput);
+            injectFileToInput(targetInput, files);
+            await new Promise(r => setTimeout(r, 1500));
+            return true;
+        }
+
+        // 策略2：如果输入框是动态生成的，寻找上传按钮点击并拦截
+        const selectors = '.add-image-box, .arco-upload, .upload-icon, [class*="upload-box"], [class*="upload-btn"], [class*="UploadBtn"], .pro-upload, [class*="upload"]';
+        
+        let scope = container;
+        if (container === document.body) {
+            const labels = Array.from(document.querySelectorAll('label, div')).filter(e => e.textContent.trim() === '产品图片');
+            if (labels.length > 0) {
+                const parent = labels[0].closest('.pro-field') || labels[0].parentElement;
+                if (parent) scope = parent;
+            }
+        }
+        
+        let uploadBtns = Array.from(scope.querySelectorAll(selectors));
+        if (uploadBtns.length === 0) {
+            uploadBtns = Array.from(scope.querySelectorAll('*')).filter(b => {
+                const txt = b.textContent || '';
+                return txt.includes('添加新图片') || txt.includes('Upload') || txt.includes('添加主图') || txt.includes('上传图片');
+            });
+        }
+        if (uploadBtns.length === 0) {
+            uploadBtns = Array.from(scope.querySelectorAll('div, span, button, i')).filter(b => {
+                const className = (b.className && typeof b.className === 'string') ? b.className.toLowerCase() : '';
+                return className.includes('upload') || className.includes('add');
+            });
+        }
+        
+        // 去重
+        uploadBtns = uploadBtns.filter((btn, index, self) => {
+            return !self.some((other, otherIndex) => index !== otherIndex && other.contains(btn));
+        });
+        
+        if (uploadBtns.length === 0) {
+            console.warn(`未找到产品图片上传按钮`);
+            return false;
+        }
+        
+        const btn = uploadBtns[0];
+        console.log("点击上传按钮触发文件框:", btn);
+        const interceptPromise = interceptFileInput(files, 4000);
+        
+        ['mousedown', 'mouseup', 'click'].forEach(evt => {
+            btn.dispatchEvent(new MouseEvent(evt, { bubbles: true, cancelable: true, view: window }));
+        });
+        if (typeof btn.click === 'function') btn.click();
+        
+        const success = await interceptPromise;
+        if (success) {
+            await new Promise(r => setTimeout(r, 1500));
+            return true;
+        }
+        return false;
+    }
 
     // 监听关闭按钮
     panel.querySelector('#miaoshou-close-btn').addEventListener('click', function() {
@@ -305,7 +450,8 @@
     // 拦截 Vue/React 动态创建的 input[type=file] 并注入文件。
     // 妙手平台点击上传按钮后，框架内部会创建 input[type=file] 并立即调用 .click()，
     // 然后移除该 input。我们需要在这个 input 出现的瞬间注入文件并触发 change。
-    function interceptFileInput(file, timeoutMs) {
+    function interceptFileInput(fileOrFiles, timeoutMs) {
+        const files = Array.isArray(fileOrFiles) ? fileOrFiles : [fileOrFiles];
         return new Promise((resolve) => {
             let resolved = false;
             const finish = (success, msg) => {
@@ -328,8 +474,8 @@
                             : node.querySelector && node.querySelector('input[type="file"]');
                         if (fileInput && fileInput.id !== 'sku-file-input' && fileInput.id !== 'sku-img-input') {
                             // 拦截到了！注入文件
-                            injectFileToInput(fileInput, file);
-                            finish(true, `已向动态创建的 input 注入文件: ${file.name}`);
+                            injectFileToInput(fileInput, files);
+                            finish(true, `已向动态创建的 input 注入 ${files.length} 个文件`);
                             return;
                         }
                     }
@@ -344,8 +490,8 @@
                 );
                 if (existing.length > 0) {
                     const last = existing[existing.length - 1];
-                    injectFileToInput(last, file);
-                    finish(true, `超时降级：向最后一个现有 input 注入文件: ${file.name}`);
+                    injectFileToInput(last, files);
+                    finish(true, `超时降级：向最后一个现有 input 注入 ${files.length} 个文件`);
                 } else {
                     finish(false, `超时 ${timeoutMs}ms 未捕获到 input[type=file]`);
                 }
@@ -354,10 +500,11 @@
     }
 
     // 向 input 注入文件并触发 Vue/React 的 change 事件
-    function injectFileToInput(input, file) {
+    function injectFileToInput(input, fileOrFiles) {
         try {
+            const files = Array.isArray(fileOrFiles) ? fileOrFiles : [fileOrFiles];
             const dt = new DataTransfer();
-            dt.items.add(file);
+            files.forEach(f => dt.items.add(f));
             // 直接赋值 files 属性
             input.files = dt.files;
             // 如果赋值失败（Vue 拦截了 setter），用 Object.defineProperty 强制覆写
@@ -402,61 +549,74 @@
         }
         console.log(`已定位到 [${item.color}-${item.size}] 的 SKU 图片行`, targetRow);
 
-        // 只在"图片"列内查找上传按钮（排除 Swatch Image 列和产品图片区）
+        async function doUpload(scope, typeName) {
+            const selectors = '.add-image-box, .arco-upload, .upload-icon, [class*="upload-box"], [class*="upload-btn"], [class*="UploadBtn"], .pro-upload, [class*="upload"]';
+            let uploadBtns = Array.from(scope.querySelectorAll(selectors));
+            
+            if (uploadBtns.length === 0 && scope === targetRow) {
+                uploadBtns = Array.from(targetRow.querySelectorAll('*')).filter(b => {
+                    const cell = b.closest('.pro-virtual-table__row-cell');
+                    const txt = b.textContent || '';
+                    return cell && (txt.includes('添加新图片') || txt.includes('Upload'));
+                });
+            }
+            if (uploadBtns.length === 0) {
+                uploadBtns = Array.from(scope.querySelectorAll(selectors));
+            }
+            // 兜底：寻找带有加号或者上传提示的任意元素
+            if (uploadBtns.length === 0) {
+                uploadBtns = Array.from(scope.querySelectorAll('div, span, button, i')).filter(b => {
+                    const className = (b.className && typeof b.className === 'string') ? b.className.toLowerCase() : '';
+                    return className.includes('upload') || className.includes('add');
+                });
+            }
+            uploadBtns = uploadBtns.filter((btn, index, self) => {
+                return !self.some((other, otherIndex) => index !== otherIndex && other.contains(btn));
+            });
+
+            if (uploadBtns.length === 0) {
+                console.warn(`[${item.color}-${item.size}] 的 ${typeName} 列未找到上传按钮`);
+                return false;
+            }
+
+            console.log(`找到 [${item.color}-${item.size}] ${typeName} 列的上传按钮，准备触发上传...`);
+            const btn = uploadBtns[0];
+            const interceptPromise = interceptFileInput(file, 4000);
+            
+            targetFileForUpload = file;
+            ['mousedown', 'mouseup', 'click'].forEach(evt => {
+                btn.dispatchEvent(new MouseEvent(evt, { bubbles: true, cancelable: true, view: window }));
+            });
+            if (typeof btn.click === 'function') btn.click();
+            
+            const success = await interceptPromise;
+            targetFileForUpload = null;
+            
+            if (success) {
+                await new Promise(r => setTimeout(r, 1500));
+                console.log(`[${item.color}-${item.size}] ${typeName} 图片上传完成`);
+                return true;
+            } else {
+                console.warn(`[${item.color}-${item.size}] ${typeName} 图片上传失败：未捕获到 file input`);
+                return false;
+            }
+        }
+
         const pictureCell = findPictureCellInRow(targetRow);
         const scope = pictureCell || targetRow;
-
-        let uploadBtns = Array.from(scope.querySelectorAll('.add-image-box'));
-        // 若图片列没有按钮，降级到整行查找（排除 Swatch 列：Swatch 列通常不含"添加新图片"）
-        if (uploadBtns.length === 0) {
-            uploadBtns = Array.from(targetRow.querySelectorAll('.add-image-box')).filter(b => {
-                const cell = b.closest('.pro-virtual-table__row-cell');
-                return cell && cell.textContent.includes('添加新图片');
-            });
-        }
-        // 兜底：行内所有 add-image-box
-        if (uploadBtns.length === 0) {
-            uploadBtns = Array.from(targetRow.querySelectorAll('.add-image-box'));
+        
+        // 1. 上传第一列图片
+        const success1 = await doUpload(scope, '图片');
+        
+        // 2. 尝试上传 Swatch Image 列
+        let success2 = true;
+        const cells = Array.from(targetRow.querySelectorAll('.pro-virtual-table__row-cell'));
+        if (cells.length >= 3) {
+            const swatchCell = cells[2];
+            success2 = await doUpload(swatchCell, 'Swatch');
         }
 
-        // 去重嵌套按钮 (只保留最外层)
-        uploadBtns = uploadBtns.filter((btn, index, self) => {
-            return !self.some((other, otherIndex) => index !== otherIndex && other.contains(btn));
-        });
-
-        if (uploadBtns.length === 0) {
-            console.warn(`[${item.color}-${item.size}] 的图片列未找到上传按钮`);
-            return false;
-        }
-
-        console.log(`找到 [${item.color}-${item.size}] 图片列的 ${uploadBtns.length} 个上传按钮，准备触发上传...`, uploadBtns);
-
-        // 只点击第一个上传按钮（每行只需上传一张 SKU 图片）
-        const btn = uploadBtns[0];
-        console.log(`点击上传按钮...`, btn);
-
-        // 启动 file input 拦截（在点击之前就开始监听）
-        const interceptPromise = interceptFileInput(file, 4000);
-
-        // 触发点击
-        ['mousedown', 'mouseup', 'click'].forEach(evt => {
-            btn.dispatchEvent(new MouseEvent(evt, { bubbles: true, cancelable: true, view: window }));
-        });
-        if (typeof btn.click === 'function') btn.click();
-
-        // 等待拦截结果
-        const success = await interceptPromise;
-        targetFileForUpload = null;
-
-        if (success) {
-            // 等待 Vue 处理上传并渲染图片预览
-            await new Promise(r => setTimeout(r, 1500));
-            console.log(`[${item.color}-${item.size}] 图片上传完成`);
-            return true;
-        } else {
-            console.warn(`[${item.color}-${item.size}] 图片上传失败：未捕获到 file input`);
-            return false;
-        }
+        return success1 && success2;
     }
 
     // 辅助函数：模拟 Vue 输入
