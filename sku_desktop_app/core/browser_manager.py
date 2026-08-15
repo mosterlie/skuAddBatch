@@ -157,7 +157,18 @@ class BrowserManager:
             return None
         for app_name in ("Google Chrome", "Microsoft Edge"):
             try:
-                script = f'tell application "{app_name}" to get URL of active tab of front window'
+                script = f'''
+                tell application "{app_name}"
+                    repeat with w in windows
+                        try
+                            set u to URL of active tab of w
+                            if u does not contain "127.0.0.1" and u does not contain "localhost" then
+                                return u
+                            end if
+                        end try
+                    end repeat
+                end tell
+                '''
                 out = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=2)
                 url = (out.stdout or "").strip()
                 if url:
@@ -260,6 +271,11 @@ class BrowserManager:
             initial_url
         ]
 
+        ext_path = "/Users/gx/Desktop/mypro/1688-Image-Downloader"
+        if os.path.exists(ext_path):
+            args.insert(1, f"--load-extension={ext_path}")
+            args.insert(2, f"--disable-extensions-except={ext_path}")
+
         try:
             if sys.platform == "win32":
                 subprocess.Popen(args, creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP)
@@ -357,7 +373,7 @@ class BrowserManager:
                     except Exception:
                         pass
 
-                is_1688 = any(kw in url.lower() for kw in config.KEYWORDS_1688) or "1688" in title
+                is_1688 = (any(kw in url.lower() for kw in config.KEYWORDS_1688) or ("1688" in title and "127.0.0.1" not in url)) and "127.0.0.1" not in url and "localhost" not in url
                 is_target = is_url_match and (is_title_match or has_dom_match) or has_dom_match
 
                 # 记录 JS 侧可见性状态（兜底用，不直接作为结论）
@@ -390,8 +406,14 @@ class BrowserManager:
                     active_idx = i
                     break
         if active_idx < 0 and js_states:
-            focused = [i for i, (v, f) in enumerate(js_states) if f]
-            visible = [i for i, (v, f) in enumerate(js_states) if v == "visible"]
+            # 过滤掉本地插件弹窗（127.0.0.1 或 localhost），不让它抢占 active_idx
+            valid_indices = [
+                i for i, t in enumerate(tabs) 
+                if "127.0.0.1" not in (t.url or "") and "localhost" not in (t.url or "")
+            ]
+            focused = [i for i in valid_indices if js_states[i][1]]
+            visible = [i for i in valid_indices if js_states[i][0] == "visible"]
+            
             if focused:
                 active_idx = focused[0]
             elif len(visible) == 1:
@@ -401,6 +423,25 @@ class BrowserManager:
             tabs[active_idx].is_active = True
 
         return tabs
+
+    def open_new_tab(self, target_url: str) -> Optional[Page]:
+        """在 Chrome 中强制开启新标签页，总是在最右侧打开"""
+        return self.run_on_browser_thread(self._open_new_tab_impl, target_url)
+
+    def _open_new_tab_impl(self, target_url: str) -> Optional[Page]:
+        if not self.context:
+            ok, _ = self._connect_impl()
+            if not ok or not self.context:
+                return None
+        self.create_tab_via_cdp_http(target_url)
+        # 浏览器通过 /json/new 创建标签页后会自动聚焦，不需要手动调用 bring_to_front()
+        # 否则如果 Playwright 的 context.pages 同步有延迟，pages[-1] 可能是旧页面，导致跳回旧页面
+        time.sleep(0.5)
+        self.bring_browser_to_front()
+        
+        if self.context.pages:
+            return self.context.pages[-1]
+        return None
 
     def open_or_focus_url(self, target_url: str) -> Optional[Page]:
         """在 Chrome 中打开目标网址或激活已有标签页"""
@@ -432,7 +473,18 @@ class BrowserManager:
                 return self.context.pages[-1]
             return None
 
-        # 复用空白页（如刚启动时的 about:blank），避免空白页残留
+        # 1. 优先检索已有相同域名的标签页，直接置顶切换，避免重复开页
+        norm_target = self._normalize_url(target_url)
+        for p in self.context.pages:
+            try:
+                if self._normalize_url(p.url) == norm_target or (target_url != "about:blank" and target_url in p.url):
+                    p.bring_to_front()
+                    self.bring_browser_to_front()
+                    return p
+            except Exception:
+                continue
+
+        # 2. 复用空白页（如刚启动时的 about:blank）
         for p in self.context.pages:
             try:
                 if p.url in ("about:blank", "") or "newtab" in p.url or "new-tab-page" in p.url:
@@ -440,21 +492,27 @@ class BrowserManager:
                         p.on("dialog", lambda dialog: self._safe_handle_dialog(dialog))
                     except Exception:
                         pass
-                    p.goto(target_url)
+                    try:
+                        p.goto(target_url, wait_until="commit", timeout=10000)
+                    except Exception:
+                        pass
                     p.bring_to_front()
                     self.bring_browser_to_front()
                     return p
             except Exception:
                 continue
 
-        # 始终在新页签中打开目标链接，不复用/覆盖已有页面
+        # 3. 新建标签页秒级直达
         try:
             new_p = self.context.new_page()
             try:
                 new_p.on("dialog", lambda dialog: self._safe_handle_dialog(dialog))
             except Exception:
                 pass
-            new_p.goto(target_url)
+            try:
+                new_p.goto(target_url, wait_until="commit", timeout=10000)
+            except Exception:
+                pass
             new_p.bring_to_front()
             self.bring_browser_to_front()
             return new_p
@@ -494,7 +552,84 @@ class BrowserManager:
         if self.context.pages:
             return self.context.pages[0]
 
-        return None
+    def open_1688_extension_popup(self, target_tab_id: Optional[int] = None) -> bool:
+        """唤起 1688-Image-Downloader 插件原生独立弹窗窗口 (方案 A)"""
+        from core.plugin_server import PluginServerManager
+        PluginServerManager.start_server(self, 31416)
+        popup_url = PluginServerManager.get_popup_url()
+
+        # 检查是否已打开插件窗口/页签
+        tabs = self.get_all_tabs()
+        for t in tabs:
+            if "popup.html" in (t.url or ""):
+                def _refresh_and_focus(page=t.page):
+                    page.bring_to_front()
+                    # 尝试直接调用页面的重新扫描函数，无刷新体验更好
+                    # 注意：必须用 setTimeout 包裹，否则 evaluate 会 await 它的 Promise，
+                    # 导致后端 executor 线程死锁 (等待 fetch /api/scan, 而 fetch 等待 executor)
+                    try:
+                        page.evaluate("setTimeout(() => { try { if(typeof window.performScan === 'function') window.performScan(); } catch(e){} }, 10);")
+                    except Exception:
+                        pass
+                self.run_on_browser_thread(_refresh_and_focus)
+                self.bring_browser_to_front()
+                return True
+
+        # 优先在当前活动 1688 页面中通过 window.open 唤出独立窗口 (width=920, height=720)
+        opened = False
+        active_p = self.get_active_page() or (tabs[-1].page if tabs else None)
+        if active_p:
+            try:
+                def _open(p=active_p):
+                    p.evaluate(f"""() => {{
+                        const w = window.open('{popup_url}', '1688_downloader_popup_win', 'width=920,height=720,left=150,top=100,menubar=no,toolbar=no,location=no,status=no,resizable=yes');
+                        if (w) w.focus();
+                    }}""")
+                self.run_on_browser_thread(_open)
+                opened = True
+            except Exception:
+                opened = False
+
+        if not opened:
+            self.create_tab_via_cdp_http(popup_url)
+
+        self.bring_browser_to_front()
+        return True
+
+    def open_calcfee_popup(self) -> bool:
+        """唤起 SKU 录入与核算系统原生独立弹窗窗口"""
+        from core.plugin_server import PluginServerManager
+        PluginServerManager.start_server(self, 31416)
+        calcfee_url = PluginServerManager.get_calcfee_url()
+
+        # 检查是否已打开计算器窗口/页签
+        tabs = self.get_all_tabs()
+        for t in tabs:
+            if "calcfee" in t.url or "calcfee_ui" in (t.title or ""):
+                self.run_on_browser_thread(t.page.bring_to_front)
+                self.bring_browser_to_front()
+                return True
+
+        # 优先在当前活动页面中通过 window.open 唤出独立窗口 (width=1320, height=850)
+        opened = False
+        active_p = self.get_active_page() or (tabs[-1].page if tabs else None)
+        if active_p:
+            try:
+                def _open(p=active_p):
+                    p.evaluate(f"""() => {{
+                        const w = window.open('{calcfee_url}', 'calcfee_popup_win', 'width=1320,height=850,left=100,top=60,menubar=no,toolbar=no,location=no,status=no,resizable=yes');
+                        if (w) w.focus();
+                    }}""")
+                self.run_on_browser_thread(_open)
+                opened = True
+            except Exception:
+                opened = False
+
+        if not opened:
+            self.create_tab_via_cdp_http(calcfee_url)
+
+        self.bring_browser_to_front()
+        return True
 
     def close(self):
         """释放 Playwright 资源"""

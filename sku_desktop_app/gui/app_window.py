@@ -16,6 +16,9 @@ from core.browser_manager import BrowserManager, TabInfo
 from core.executor import SkuExecutor
 from core.scraper_1688 import Scraper1688
 from core.login_helper import MiaoshouLoginHelper, load_saved_credentials, save_credentials
+from core.plugin_server import PluginServerManager
+from core.plugin_overlay_injector import inject_plugin_ui_into_1688_page
+from gui.preview_1688_dialog import Preview1688Dialog
 
 
 class SkuAppGUI:
@@ -23,9 +26,9 @@ class SkuAppGUI:
 
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("妙手 SKU 智能批量录入助手 v2.0 (接管模式)")
-        self.root.geometry("860x680")
-        self.root.minsize(800, 600)
+        self.root.title("跨境电商智能工作台 (1688采集 • 数据整理 • 妙手批量录入)")
+        self.root.geometry("880x720")
+        self.root.minsize(840, 620)
 
         # 核心控制器
         self.browser_mgr = BrowserManager()
@@ -33,6 +36,14 @@ class SkuAppGUI:
         self.current_executor: Optional[SkuExecutor] = None
         self.available_tabs: List[TabInfo] = []
         self.is_running = False
+
+        # 启动 1688 插件与 calcfee 本地专属守护服务 (端口 31416)，并注入回调
+        PluginServerManager.start_server(
+            self.browser_mgr,
+            31416,
+            on_scan_callback=self._on_plugin_scan_callback,
+            on_export_callback=self._on_calcfee_export_callback
+        )
 
         # 初始化样式与界面布局
         self._setup_styles()
@@ -72,33 +83,232 @@ class SkuAppGUI:
         style.configure("Action.TButton", font=("Helvetica", 10), background="#f1f5f9", foreground=self.text_primary)
         style.configure("Stop.TButton", font=("Helvetica", 10, "bold"), background=self.accent_red, foreground=self.text_primary)
 
+        style.configure("Main.TNotebook", background=self.bg_color)
+        style.configure("Main.TNotebook.Tab", font=("Helvetica", 10, "bold"), padding=[18, 6])
+
     def _create_widgets(self):
         """构建界面主要组件"""
-        # 主滚动容器/外边距容器
-        main_container = ttk.Frame(self.root, padding="16 16 16 16")
+        # 主容器
+        main_container = ttk.Frame(self.root, padding="14 12 14 12")
         main_container.pack(fill=tk.BOTH, expand=True)
 
         # 1. 顶部标题与状态栏
         header_frame = ttk.Frame(main_container)
-        header_frame.pack(fill=tk.X, pady=(0, 12))
+        header_frame.pack(fill=tk.X, pady=(0, 8))
 
-        title_label = ttk.Label(header_frame, text="🤖 妙手 SKU 批量自动化录入助手", style="Header.TLabel")
+        title_label = ttk.Label(header_frame, text="🤖 妙手与1688 跨境电商智能工作台", style="Header.TLabel")
         title_label.pack(side=tk.LEFT)
 
-        sub_label = ttk.Label(header_frame, text="原生接管模式 • 零配置免服务", font=("Helvetica", 9), foreground=self.text_secondary)
+        sub_label = ttk.Label(header_frame, text="商品采集 • 数据整理 • 批量录入一站式助手", font=("Helvetica", 9), foreground=self.text_secondary)
         sub_label.pack(side=tk.LEFT, padx=(10, 0), pady=(4, 0))
 
-        # 2. 浏览器连接管理卡片
-        self._create_browser_card(main_container)
+        # 2. 顶级主菜单 Notebook
+        self.notebook = ttk.Notebook(main_container, style="Main.TNotebook")
+        self.notebook.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
+        self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
-        # 3. 数据文件选择卡片
-        self._create_file_card(main_container)
+        # 菜单 1: 📦 商品采集
+        self.tab_collect = ttk.Frame(self.notebook, padding="10 10 10 10")
+        self.notebook.add(self.tab_collect, text="  📦 商品采集  ")
+        self._build_collect_tab(self.tab_collect)
 
-        # 4. 操作与控制区域
-        self._create_action_card(main_container)
+        # 菜单 2: 📑 数据整理 (暂时留空)
+        self.tab_process = ttk.Frame(self.notebook, padding="10 10 10 10")
+        self.notebook.add(self.tab_process, text="  📑 数据整理  ")
+        self._build_process_tab(self.tab_process)
 
-        # 5. 日志监控窗口
+        # 菜单 3: 🚀 商品录入 (妙手批量上传原有页面)
+        self.tab_entry = ttk.Frame(self.notebook, padding="10 10 10 10")
+        self.notebook.add(self.tab_entry, text="  🚀 商品录入  ")
+        self._build_entry_tab(self.tab_entry)
+
+        # 3. 底部常驻日志监控窗口
         self._create_log_console(main_container)
+
+    def _build_collect_tab(self, parent):
+        """构建【商品采集】菜单页面"""
+        # 卡片 1: 平台直达与采集操作
+        card_actions = ttk.Frame(parent, style="Card.TFrame", padding="16 14 16 14")
+        card_actions.pack(fill=tk.X, pady=(0, 10))
+
+        ttk.Label(card_actions, text="🛒 1688 与妙手商品采集工作台", style="Section.TLabel").pack(anchor=tk.W, pady=(0, 10))
+
+        btn_row = ttk.Frame(card_actions, style="Card.TFrame")
+        btn_row.pack(fill=tk.X, pady=(0, 12))
+
+        # 按钮 1: 打开 1688
+        btn_1688 = tk.Button(btn_row, text="🛒 1. 打开 1688", font=("Helvetica", 10, "bold"),
+                             bg="#f97316", fg="#1e293b", activebackground="#ea580c", activeforeground="#1e293b",
+                             highlightbackground="#f97316", relief="flat", cursor="hand2", padx=14, pady=8,
+                             command=self._on_open_1688)
+        btn_1688.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 8))
+
+        # 按钮 2: 1688数据预览与采集
+        btn_preview = tk.Button(btn_row, text="✨ 2. 1688数据预览与采集", font=("Helvetica", 10, "bold"),
+                                bg="#ec4899", fg="#1e293b", activebackground="#db2777", activeforeground="#1e293b",
+                                highlightbackground="#ec4899", relief="flat", cursor="hand2", padx=14, pady=8,
+                                command=self._on_download_1688)
+        btn_preview.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 8))
+
+        # 按钮 3: 打开妙手采集箱
+        btn_miaoshou = tk.Button(btn_row, text="🚀 3. 打开妙手采集箱", font=("Helvetica", 10, "bold"),
+                                 bg="#3b82f6", fg="#1e293b", activebackground="#2563eb", activeforeground="#1e293b",
+                                 highlightbackground="#3b82f6", relief="flat", cursor="hand2", padx=14, pady=8,
+                                 command=self._on_open_miaoshou_collect)
+        btn_miaoshou.pack(side=tk.LEFT, expand=True, fill=tk.X)
+
+        # 卡片 2: 当前商品信息展示（标题 + 链接 + 独立复制按钮）
+        card_product = ttk.Frame(parent, style="Card.TFrame", padding="14 12 14 12")
+        card_product.pack(fill=tk.X, pady=(0, 10))
+
+        top_info_row = ttk.Frame(card_product, style="Card.TFrame")
+        top_info_row.pack(fill=tk.X, pady=(0, 8))
+        ttk.Label(top_info_row, text="📦 当前商品信息", style="Section.TLabel").pack(side=tk.LEFT)
+        self.collect_info_tip = ttk.Label(top_info_row, text="（切到本页或点击下方采集自动回填）",
+                                          font=("Helvetica", 8), foreground=self.text_secondary, style="Card.TLabel")
+        self.collect_info_tip.pack(side=tk.LEFT, padx=(6, 0))
+
+        # 商品标题行
+        title_row = ttk.Frame(card_product, style="Card.TFrame")
+        title_row.pack(fill=tk.X, pady=(0, 6))
+        ttk.Label(title_row, text="商品标题:", font=("Helvetica", 9, "bold"), style="Card.TLabel").pack(side=tk.LEFT, padx=(0, 6))
+        self.collect_title_var = tk.StringVar(value="等待采集...")
+        self.collect_title_entry = tk.Entry(title_row, textvariable=self.collect_title_var, font=("Helvetica", 9),
+                                            bg="#f8fafc", fg=self.text_primary, relief="solid", bd=1)
+        self.collect_title_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6), ipady=3)
+
+        self.btn_copy_title = tk.Button(title_row, text="📋 复制标题", font=("Helvetica", 9, "bold"),
+                                        bg="#3b82f6", fg="#1e293b", activebackground="#2563eb", activeforeground="#1e293b",
+                                        highlightbackground="#3b82f6", relief="flat", cursor="hand2", padx=10, pady=2,
+                                        command=self._on_copy_product_title)
+        self.btn_copy_title.pack(side=tk.RIGHT)
+
+        # 商品链接行
+        url_row = ttk.Frame(card_product, style="Card.TFrame")
+        url_row.pack(fill=tk.X)
+        ttk.Label(url_row, text="商品链接:", font=("Helvetica", 9, "bold"), style="Card.TLabel").pack(side=tk.LEFT, padx=(0, 6))
+        self.collect_url_var = tk.StringVar(value="等待采集...")
+        self.collect_url_entry = tk.Entry(url_row, textvariable=self.collect_url_var, font=("Helvetica", 9),
+                                          bg="#f8fafc", fg=self.text_primary, relief="solid", bd=1)
+        self.collect_url_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6), ipady=3)
+
+        self.btn_copy_url = tk.Button(url_row, text="📋 复制链接", font=("Helvetica", 9, "bold"),
+                                      bg="#3b82f6", fg="#1e293b", activebackground="#2563eb", activeforeground="#1e293b",
+                                      highlightbackground="#3b82f6", relief="flat", cursor="hand2", padx=10, pady=2,
+                                      command=self._on_copy_product_url)
+        self.btn_copy_url.pack(side=tk.RIGHT)
+
+        # 卡片 3: 操作指引与流程说明
+        card_guide = ttk.Frame(parent, style="Card.TFrame", padding="16 14 16 14")
+        card_guide.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(card_guide, text="💡 商品采集标准化工作流指引", style="Section.TLabel").pack(anchor=tk.W, pady=(0, 8))
+
+        steps = [
+            ("步骤 1: 打开 1688 选品", "点击上方【打开 1688】在浏览器中搜索货源并进入目标商品详情页。"),
+            ("步骤 2: 预览素材与选款下载", "在商品详情页点击【1688数据预览与采集】，弹出独立工作台分类预览主图、SKU 色卡与详情图，勾选后一键多线程写盘下载。"),
+            ("步骤 3: 导入妙手采集箱", "点击【打开妙手采集箱】自动跳转至妙手通用采集箱 (linkCopy 模式)，粘贴链接批量采集入库。")
+        ]
+
+        for title, desc in steps:
+            row = ttk.Frame(card_guide, style="Card.TFrame")
+            row.pack(fill=tk.X, pady=4)
+            ttk.Label(row, text=f"• {title}:", font=("Helvetica", 9, "bold"), style="Card.TLabel").pack(anchor=tk.W)
+            ttk.Label(row, text=f"   {desc}", font=("Helvetica", 9), foreground=self.text_secondary, style="Card.TLabel").pack(anchor=tk.W)
+
+    def _build_process_tab(self, parent):
+        """构建【数据整理】菜单页面 (包含 SKU 录入工作台、JSON 数据管理与标准化流程指引)"""
+        # 卡片 1: SKU 智能录入与核算控制台
+        card_actions = ttk.Frame(parent, style="Card.TFrame", padding="16 14 16 14")
+        card_actions.pack(fill=tk.X, pady=(0, 10))
+
+        ttk.Label(card_actions, text="📊 SKU 智能核算与录入工作台", style="Section.TLabel").pack(anchor=tk.W, pady=(0, 6))
+        ttk.Label(card_actions, text="点击下方按钮弹出独立 Chrome 工作台，填写商品规格与采购价，自动匹配全渠道最优物流并导出 JSON 数据。",
+                  font=("Helvetica", 9), foreground=self.text_secondary, style="Card.TLabel").pack(anchor=tk.W, pady=(0, 10))
+
+        btn_row = ttk.Frame(card_actions, style="Card.TFrame")
+        btn_row.pack(fill=tk.X, pady=(0, 6))
+
+        # 按钮 1: 弹出 SKU 录入工作台
+        self.btn_sku_entry = tk.Button(btn_row, text="✨ 1. 弹出 SKU 录入工作台", font=("Helvetica", 10, "bold"),
+                                       bg="#10b981", fg="#ffffff", activebackground="#059669", activeforeground="#ffffff",
+                                       highlightbackground="#10b981", relief="flat", cursor="hand2", padx=16, pady=9,
+                                       command=self._on_open_sku_calc)
+        self.btn_sku_entry.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 8))
+
+        # 按钮 2: 打开数据导出目录
+        self.btn_open_json_dir = tk.Button(btn_row, text="📂 2. 打开数据导出目录", font=("Helvetica", 10, "bold"),
+                                           bg="#6366f1", fg="#ffffff", activebackground="#4f46e5", activeforeground="#ffffff",
+                                           highlightbackground="#6366f1", relief="flat", cursor="hand2", padx=14, pady=9,
+                                           command=self._on_open_export_dir)
+        self.btn_open_json_dir.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 8))
+
+        # 按钮 3: 复制最新 JSON 路径
+        self.btn_copy_json_path = tk.Button(btn_row, text="📋 3. 复制最新 JSON 路径", font=("Helvetica", 10, "bold"),
+                                            bg="#3b82f6", fg="#ffffff", activebackground="#2563eb", activeforeground="#ffffff",
+                                            highlightbackground="#3b82f6", relief="flat", cursor="hand2", padx=14, pady=9,
+                                            command=self._on_copy_latest_json_path)
+        self.btn_copy_json_path.pack(side=tk.LEFT, expand=True, fill=tk.X)
+
+        # 卡片 2: 最近导出的 SKU 数据管理
+        card_data = ttk.Frame(parent, style="Card.TFrame", padding="14 12 14 12")
+        card_data.pack(fill=tk.X, pady=(0, 10))
+
+        top_data_row = ttk.Frame(card_data, style="Card.TFrame")
+        top_data_row.pack(fill=tk.X, pady=(0, 8))
+        ttk.Label(top_data_row, text="📦 最近录入与导出状态", style="Section.TLabel").pack(side=tk.LEFT)
+
+        self.lbl_json_status = tk.Label(top_data_row, text="🟢 就绪 (等待在工作台中录入并导出)",
+                                        font=("Helvetica", 9, "bold"), bg=self.card_bg, fg="#64748b")
+        self.lbl_json_status.pack(side=tk.RIGHT)
+
+        # 文件路径行
+        path_row = ttk.Frame(card_data, style="Card.TFrame")
+        path_row.pack(fill=tk.X, pady=(0, 6))
+        ttk.Label(path_row, text="最新文件:", font=("Helvetica", 9, "bold"), style="Card.TLabel").pack(side=tk.LEFT, padx=(0, 6))
+
+        self.latest_json_path_var = tk.StringVar(value="")
+        self.latest_json_entry = tk.Entry(path_row, textvariable=self.latest_json_path_var, font=("Helvetica", 9),
+                                          bg="#f8fafc", fg=self.text_primary, relief="solid", bd=1)
+        self.latest_json_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=3)
+
+        # 详细信息行
+        info_row = ttk.Frame(card_data, style="Card.TFrame")
+        info_row.pack(fill=tk.X)
+        self.latest_json_info_var = tk.StringVar(value="提示：在 Chrome 录入工作台中录入规格并点击【📥 导出 JSON 数据】后，此处将自动同步并记录。")
+        self.lbl_json_info = ttk.Label(info_row, textvariable=self.latest_json_info_var,
+                                       font=("Helvetica", 8), foreground=self.text_secondary, style="Card.TLabel")
+        self.lbl_json_info.pack(side=tk.LEFT)
+
+        # 卡片 3: 操作指引与标准化工作流说明
+        card_guide = ttk.Frame(parent, style="Card.TFrame", padding="16 14 16 14")
+        card_guide.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(card_guide, text="💡 数据整理与批量录入标准化工作流", style="Section.TLabel").pack(anchor=tk.W, pady=(0, 8))
+
+        flow_steps = [
+            ("步骤 1: 采集素材与货源", "在【商品采集】页浏览 1688 详情页，点击预览采集多线程下载主图、SKU 色卡与详情图素材。"),
+            ("步骤 2: 智能核算与录入", "点击上方【✨ 1. 弹出 SKU 录入工作台】，填写长宽高、实重、采购价与利润系数，系统自动推算全渠道运费并推荐最优解。"),
+            ("步骤 3: 导出 JSON 数据", "在录入工作台中核算完成后点击【📥 导出 JSON 数据】，数据将自动下载并同步持久化到本地 sku_data_exports 目录。"),
+            ("步骤 4: 妙手批量发布", "在【商品录入】页选择数据文件，点击开始批量录入，一键极速注入妙手采集箱或 ERP 批量刊登系统。")
+        ]
+
+        for title, desc in flow_steps:
+            row = ttk.Frame(card_guide, style="Card.TFrame")
+            row.pack(fill=tk.X, pady=4)
+            ttk.Label(row, text=f"• {title}:", font=("Helvetica", 9, "bold"), style="Card.TLabel").pack(anchor=tk.W)
+            ttk.Label(row, text=f"   {desc}", font=("Helvetica", 9), foreground=self.text_secondary, style="Card.TLabel").pack(anchor=tk.W)
+
+    def _build_entry_tab(self, parent):
+        """构建【商品录入】菜单页面 (妙手批量上传原有页面)"""
+        # 1. 浏览器连接管理卡片
+        self._create_browser_card(parent)
+
+        # 2. 数据文件选择卡片
+        self._create_file_card(parent)
+
+        # 3. 操作与控制区域
+        self._create_action_card(parent)
 
     def _create_browser_card(self, parent):
         """构建浏览器控制卡片"""
@@ -257,11 +467,16 @@ class SkuAppGUI:
                                         padx=8, pady=3, command=self._on_inspect_1688)
         self.btn_check_1688.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 4))
 
-        self.btn_download_1688 = tk.Button(sub_row_2, text="🛒 抓取1688数据", font=("Helvetica", 9, "bold"),
+        self.btn_download_1688 = tk.Button(sub_row_2, text="🛒 1688素材预览与选款", font=("Helvetica", 9, "bold"),
                                            bg="#ec4899", fg="#1e293b", relief="flat", cursor="hand2",
                                            highlightbackground="#ec4899",
                                            padx=8, pady=3, command=self._on_download_1688)
         self.btn_download_1688.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 4))
+
+        self.btn_test_upload = tk.Button(sub_row_2, text="🧪 测试SKU多图", font=("Helvetica", 9),
+                                         bg="#e0e7ff", fg="#4338ca", relief="flat", cursor="hand2",
+                                         padx=8, pady=3, command=lambda: self._on_single_step("test_upload"))
+        self.btn_test_upload.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 4))
 
         self.btn_stop = tk.Button(sub_row_2, text="🛑 停止", font=("Helvetica", 9, "bold"),
                                   bg="#ef4444", fg="#1e293b", relief="flat", cursor="hand2",
@@ -374,8 +589,8 @@ class SkuAppGUI:
                     self.append_log(f"❌ {msg}", "error")
                     return
             else:
-                self.browser_mgr.open_or_focus_url(config.MIAOSHOU_HOME_URL)
-                self.append_log("已在当前浏览器中定位/打开妙手工作台标签页", "success")
+                self.browser_mgr.open_new_tab(config.MIAOSHOU_HOME_URL)
+                self.append_log("✨ 已在浏览器最右侧新开妙手标签页！", "success")
 
             self.root.after(400, self._async_refresh_browser_status)
 
@@ -388,9 +603,7 @@ class SkuAppGUI:
                     acc = self.acc_var.get().strip()
                     pwd = self.pwd_var.get().strip()
                     self.browser_mgr.run_on_browser_thread(helper.auto_solve_captcha_and_login, acc, pwd)
-                    time.sleep(2.0)
-                # 登录就绪后，自动点击左侧功能菜单：快速上货 -> Amazon
-                self.browser_mgr.run_on_browser_thread(auto_nav_quick_listing_amazon, target_p, self.append_log)
+                    time.sleep(1.0)
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -436,63 +649,223 @@ class SkuAppGUI:
                 else:
                     self.append_log(f"❌ {msg}", "error")
             else:
-                self.browser_mgr.open_or_focus_url(config.URL_1688_HOME)
-                self.append_log("已在当前浏览器中定位/打开 1688 标签页", "success")
+                self.browser_mgr.open_new_tab(config.URL_1688_HOME)
+                self.append_log("✨ 已在浏览器最右侧新开 1688 标签页！", "success")
 
+            self.browser_mgr.bring_browser_to_front()
+            self.root.after(300, self._async_refresh_browser_status)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_open_miaoshou_collect(self):
+        """在 Chrome 中打开妙手通用采集箱 (linkCopy 模式)"""
+        target_url = "https://erp.91miaoshou.com/common_collect_box/index?fetchType=linkCopy"
+        self.append_log(f"正在打开妙手采集箱: {target_url} ...", "info")
+
+        def _worker():
+            if not self.browser_mgr.is_cdp_ready():
+                ok, msg = self.browser_mgr.launch_managed_chrome(initial_url=target_url)
+                if ok:
+                    self.append_log("✨ 成功拉起 Chrome 并打开妙手采集箱！", "success")
+                else:
+                    self.append_log(f"❌ {msg}", "error")
+            else:
+                self.browser_mgr.open_new_tab(target_url)
+                self.append_log("✨ 已在浏览器最右侧新开妙手标签页！", "success")
+
+            self.browser_mgr.bring_browser_to_front()
             self.root.after(300, self._async_refresh_browser_status)
 
         threading.Thread(target=_worker, daemon=True).start()
 
     def _on_inspect_1688(self):
-        """读取并检查当前 1688 页面的登录态与预览信息"""
+        """读取并检查当前 1688 页面的登录态与基本信息"""
         page = self._get_target_page()
         if not page:
-            messagebox.showwarning("提示", "未找到可操作的标签页，请先在下拉框选择 1688 标签页！")
+            messagebox.showwarning("提示", "未找到可操作的标签页，请先在上方下拉框选择 1688 标签页！")
             return
 
         def _worker():
-            self.append_log(f"正在检测当前选中页面的 1688 登录状态与数据: {page.url} ...", "info")
-            scraper = Scraper1688(page)
+            self.append_log(f"正在检测当前选中页面的 1688 登录状态: {page.url} ...", "info")
+            scraper = Scraper1688(page, log_fn=self.append_log)
             is_login = self.browser_mgr.run_on_browser_thread(scraper.is_logged_in)
             if is_login:
                 self.append_log("🟢 1688 登录状态正常！已检测到用户会话，无需重新登录。", "success")
             else:
                 self.append_log("⚠️ 未检测到 1688 登录态，若未登录请在浏览器中扫码登录一次（登录后会自动持久化）。", "warn")
 
-            data = self.browser_mgr.run_on_browser_thread(scraper.extract_product_preview)
-            title = data.get("title", "")
-            imgs = data.get("main_images", [])
-            self.append_log(f"📄 1688 页面标题: {title}", "info")
-            if imgs:
-                self.append_log(f"🖼️ 检测到主图数量: {len(imgs)} 张", "info")
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_tab_changed(self, event=None):
+        """当用户切换主菜单页签时触发对应自适应逻辑"""
+        try:
+            selected_tab = self.notebook.select()
+            if selected_tab == str(self.tab_collect):
+                # 切换到【商品采集】菜单：自动探测当前 1688 页面并快速回填
+                self._async_probe_1688_info()
+        except Exception:
+            pass
+
+    def _async_probe_1688_info(self):
+        """在后台轻量探测当前打开的 1688 商品详情页标题与链接，毫秒级回填"""
+        def _worker():
+            try:
+                if not self.browser_mgr.is_cdp_ready():
+                    return
+                tabs = self.browser_mgr.get_all_tabs()
+                detail_tab = None
+                # 1. 优先获取当前正在显示的 1688 详情页
+                for t in tabs:
+                    if t.is_active and ("detail.1688.com" in (t.url or "") or "/offer/" in (t.url or "")) and "127.0.0.1" not in (t.url or "") and "localhost" not in (t.url or ""):
+                        detail_tab = t
+                        break
+                        
+                # 2. 如果前台没有任何 1688 详情页面激活，兜底找最后一个打开的 1688 详情页
+                if not detail_tab:
+                    for t in reversed(tabs):
+                        if ("detail.1688.com" in (t.url or "") or "/offer/" in (t.url or "")) and "127.0.0.1" not in (t.url or "") and "localhost" not in (t.url or ""):
+                            detail_tab = t
+                            break
+                if detail_tab:
+                    u = detail_tab.url or ""
+                    raw_t = detail_tab.title or ""
+                    clean_t = raw_t.split('-')[0].replace('【阿里巴巴】', '').replace('- 阿里巴巴', '').strip()
+                    if not clean_t:
+                        clean_t = raw_t.strip()
+                    if clean_t or u:
+                        self.root.after(0, lambda: self._update_collect_product_info(clean_t, u))
+            except Exception:
+                pass
 
         threading.Thread(target=_worker, daemon=True).start()
 
     def _on_download_1688(self):
-        """一键抓取并下载 1688 当前页面的变体、图片和 SKU 数据"""
-        page = self._get_target_page()
-        if not page:
-            messagebox.showwarning("提示", "未找到可操作的标签页，请先在下拉框选择 1688 标签页！")
-            return
-            
-        file_path = self.file_path_var.get()
-        if file_path and os.path.exists(os.path.dirname(file_path)):
-            base_dir = os.path.dirname(file_path)
+        """直接在 Chrome 中弹出 1688-Image-Downloader 插件原生独立窗口 (方案 A)"""
+        # 1. 确保 Chrome 浏览器已连接/已启动
+        if not self.browser_mgr.is_cdp_ready():
+            self.append_log("未检测到运行中的 Chrome 浏览器，正在启动...", "info")
+            ok, msg = self.browser_mgr.launch_managed_chrome(initial_url=config.URL_1688_HOME)
+            if not ok:
+                self.append_log(f"❌ {msg}", "error")
+                messagebox.showerror("启动失败", msg)
+                return
+            time.sleep(1.5)
+
+        # 2. 立即主动探测并回填当前 1688 页面标题与链接
+        self._async_probe_1688_info()
+
+        # 3. 立即唤起 Chrome 插件原生独立工作台窗口
+        self.append_log("正在唤起 Chrome 1688 插件原生工作台独立窗口...", "info")
+        ok = self.browser_mgr.open_1688_extension_popup()
+        if ok:
+            self.append_log("✨ 已成功弹出 1688 插件原生独立工作台窗口！", "success")
         else:
-            base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-            
-        self._set_ui_running(True)
-        def _worker():
-            try:
-                self.append_log(f"准备从 {page.url} 提取 1688 数据...", "info")
-                scraper = Scraper1688(page, log_fn=self.append_log)
-                self.browser_mgr.run_on_browser_thread(lambda: scraper.extract_and_download(base_dir))
-            except Exception as e:
-                self.append_log(f"1688 数据抓取异常: {str(e)}", "error")
-            finally:
-                self.root.after(0, lambda: self._set_ui_running(False))
-                
-        threading.Thread(target=_worker, daemon=True).start()
+            self.append_log("⚠️ 唤起插件窗口未成功，请检查插件目录路径", "warn")
+
+    def _on_open_sku_calc(self):
+        """弹出独立 Chrome 窗口展示 calcfee SKU 录入与核算工作台"""
+        # 1. 确保 Chrome 浏览器已连接/已启动
+        if not self.browser_mgr.is_cdp_ready():
+            self.append_log("未检测到运行中的 Chrome 浏览器，正在启动...", "info")
+            calcfee_url = PluginServerManager.get_calcfee_url()
+            ok, msg = self.browser_mgr.launch_managed_chrome(initial_url=calcfee_url)
+            if not ok:
+                self.append_log(f"❌ {msg}", "error")
+                messagebox.showerror("启动失败", msg)
+                return
+            time.sleep(1.5)
+
+        # 2. 唤起 Chrome 原生独立工作台窗口
+        self.append_log("正在唤起 Chrome SKU 录入与核算工作台独立窗口...", "info")
+        ok = self.browser_mgr.open_calcfee_popup()
+        if ok:
+            self.append_log("✨ 已成功弹出 SKU 录入与核算工作台独立窗口！", "success")
+        else:
+            self.append_log("⚠️ 唤起工作台窗口未成功，请检查服务状态", "warn")
+
+    def _on_open_export_dir(self):
+        """打开数据导出目录 (test产品试验品)"""
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        target_dir = os.path.join(base_dir, "test产品试验品")
+        os.makedirs(target_dir, exist_ok=True)
+
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", target_dir])
+        elif sys.platform == "win32":
+            os.startfile(target_dir)
+        else:
+            subprocess.Popen(["xdg-open", target_dir])
+
+        self.append_log(f"📂 已打开数据导出目录: {target_dir}", "info")
+
+    def _on_copy_latest_json_path(self):
+        """复制最新导出的 JSON 文件完整路径"""
+        path = self.latest_json_path_var.get().strip() if hasattr(self, 'latest_json_path_var') else ""
+        if not path or not os.path.exists(path):
+            messagebox.showinfo("提示", "暂无最新导出的 JSON 文件，请先在工作台中录入并导出！")
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(path)
+        self.root.update()
+        self.append_log(f"📋 已复制最新 JSON 路径到剪贴板: {path}", "success")
+
+    def _on_calcfee_export_callback(self, file_path: str, count: int):
+        """当前端录入系统导出 JSON 时，主程序实时同步状态与日志"""
+        def _update():
+            if hasattr(self, 'latest_json_path_var'):
+                self.latest_json_path_var.set(file_path)
+            if hasattr(self, 'latest_json_info_var'):
+                self.latest_json_info_var.set(f"包含条目: {count} 条 | 导出时间: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+            if hasattr(self, 'lbl_json_status'):
+                self.lbl_json_status.configure(text=f"🟢 最新导出: {os.path.basename(file_path)} (共 {count} 条)", fg="#10b981")
+            self.append_log(f"📥 成功接收并保存导出的 SKU 数据: {os.path.basename(file_path)} (共 {count} 条条目)", "success")
+        self.root.after(0, _update)
+
+    def _on_plugin_scan_callback(self, title: str, url: str):
+        """当本地插件服务完成扫描时，自动同步更新 GUI 商品信息"""
+        self.root.after(0, lambda: self._update_collect_product_info(title, url))
+
+    def _update_collect_product_info(self, title: str, url: str):
+        """更新商品采集工作台中的商品标题与链接信息"""
+        clean_title = (title or "").strip()
+        if clean_title:
+            self.collect_title_var.set(clean_title)
+        clean_url = (url or "").strip()
+        if clean_url:
+            self.collect_url_var.set(clean_url)
+        if hasattr(self, 'collect_info_tip'):
+            self.collect_info_tip.configure(text="（已就绪，可一键复制）", foreground="#10b981")
+        self.append_log(f"📦 已自动获取并更新商品信息: {clean_title[:35]}...", "success")
+
+    def _on_copy_product_title(self):
+        """复制当前商品标题到剪贴板"""
+        title = self.collect_title_var.get()
+        if not title or title in ("等待采集...", "⏳ 正在采集 1688 商品数据..."):
+            messagebox.showinfo("提示", "暂无商品标题，请先点击【1688数据预览与采集】获取商品信息！")
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(title)
+        self.root.update()
+        orig_text = self.btn_copy_title.cget("text")
+        orig_bg = self.btn_copy_title.cget("bg")
+        self.btn_copy_title.configure(text="✅ 已复制!", bg="#10b981")
+        self.append_log(f"📋 商品标题已复制到剪贴板: {title}", "success")
+        self.root.after(2000, lambda: self.btn_copy_title.configure(text=orig_text, bg=orig_bg))
+
+    def _on_copy_product_url(self):
+        """复制当前商品链接到剪贴板"""
+        url = self.collect_url_var.get()
+        if not url or url in ("等待采集...", "⏳ 正在解析商品链接..."):
+            messagebox.showinfo("提示", "暂无商品链接，请先点击【1688数据预览与采集】获取商品信息！")
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(url)
+        self.root.update()
+        orig_text = self.btn_copy_url.cget("text")
+        orig_bg = self.btn_copy_url.cget("bg")
+        self.btn_copy_url.configure(text="✅ 已复制!", bg="#10b981")
+        self.append_log(f"📋 商品链接已复制到剪贴板: {url}", "success")
+        self.root.after(2000, lambda: self.btn_copy_url.configure(text=orig_text, bg=orig_bg))
 
     def _async_refresh_browser_status(self):
         """异步刷新浏览器状态与标签页列表"""
@@ -563,6 +936,7 @@ class SkuAppGUI:
         self.btn_table.configure(state=state)
         self.btn_auto_login.configure(state=state)
         self.btn_check_1688.configure(state=state)
+        self.btn_test_upload.configure(state=state)
         self.btn_stop.configure(state=tk.NORMAL if running else tk.DISABLED)
 
     def _on_stop_task(self):
@@ -625,6 +999,8 @@ class SkuAppGUI:
                     self.browser_mgr.run_on_browser_thread(executor.upload_product_images)
                 elif step_name == "sku_img":
                     self.browser_mgr.run_on_browser_thread(executor.upload_sku_images)
+                elif step_name == "test_upload":
+                    self.browser_mgr.run_on_browser_thread(executor.test_upload_first_sku_images)
                 elif step_name == "table":
                     self.browser_mgr.run_on_browser_thread(executor.fill_virtual_table)
             except Exception as e:

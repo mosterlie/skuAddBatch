@@ -3,6 +3,7 @@
 负责调度变体生成、图片原生批量上传、虚拟表格滚动匹配与字段填入
 """
 import os
+import re
 import sys
 import time
 from typing import Optional, Callable, Set, List, Dict, Any
@@ -232,6 +233,99 @@ class SkuExecutor:
         self.log(f"正在执行【步骤 2/4】：添加变体维度 (颜色: {len(self.bundle.unique_colors)} 项, 尺寸: {len(self.bundle.unique_sizes)} 项)...", "info")
 
         try:
+            # 新增：勾选"规格类型"下拉框中的"颜色"和"尺寸"
+            self.log("正在检查并勾选【规格类型】中的变体属性...", "info")
+            js_select_spec = """
+            async (args) => {
+                const { hasColor, hasSize } = args;
+                
+                const formItems = Array.from(document.querySelectorAll('.jx-form-item, .pro-form-item, .sale-attribute-item, .el-form-item'));
+                const specGroup = formItems.find(f => {
+                    const label = f.querySelector('.jx-form-item__label, label, [class*="label"]');
+                    return label && label.innerText.includes('规格类型');
+                });
+                
+                if (!specGroup) return 'not_found';
+                
+                const selectInput = specGroup.querySelector('.jx-select__input, .el-input__inner, input[type="text"]');
+                if (!selectInput) return 'no_input';
+                
+                let clickedCount = 0;
+                
+                const searchAndSelect = async (keyword) => {
+                    // Focus and click
+                    selectInput.focus();
+                    ['mousedown', 'mouseup', 'click'].forEach(evt => {
+                        selectInput.dispatchEvent(new MouseEvent(evt, { bubbles: true, cancelable: true, view: window }));
+                    });
+                    await new Promise(r => setTimeout(r, 400));
+                    
+                    // Set value and trigger input
+                    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+                    nativeInputValueSetter.call(selectInput, keyword);
+                    selectInput.dispatchEvent(new Event('input', { bubbles: true }));
+                    await new Promise(r => setTimeout(r, 600));
+                    
+                    // Find dropdown options
+                    const popups = Array.from(document.querySelectorAll('.jx-select-dropdown, .el-select-dropdown, .jx-popper')).filter(p => p.style.display !== 'none');
+                    for (const popup of popups) {
+                        const options = Array.from(popup.querySelectorAll('li'));
+                        for (const opt of options) {
+                            const txt = opt.innerText.trim();
+                            if (txt === keyword || txt.includes(keyword)) {
+                                if (!opt.className.includes('is-selected') && !opt.className.includes('selected') && !opt.className.includes('is-checked')) {
+                                    opt.scrollIntoView({ block: 'center' });
+                                    ['mousedown', 'mouseup', 'click'].forEach(evt => {
+                                        opt.dispatchEvent(new MouseEvent(evt, { bubbles: true, cancelable: true, view: window }));
+                                    });
+                                    clickedCount++;
+                                    await new Promise(r => setTimeout(r, 500));
+                                    
+                                    // 检查是否有弹窗提示“更改规格类型将删除...”并点击“确定”
+                                    const confirmBtns = Array.from(document.querySelectorAll('button')).filter(b => b.innerText.includes('确定') || b.innerText.includes('Confirm') || b.innerText.includes('是'));
+                                    // 过滤出可见的确定按钮
+                                    const visibleConfirmBtns = confirmBtns.filter(b => {
+                                        const rect = b.getBoundingClientRect();
+                                        return rect.width > 0 && rect.height > 0;
+                                    });
+                                    
+                                    if (visibleConfirmBtns.length > 0) {
+                                        const confirmBtn = visibleConfirmBtns[visibleConfirmBtns.length - 1]; // 通常最后一个是最上层弹窗的按钮
+                                        ['mousedown', 'mouseup', 'click'].forEach(evt => {
+                                            confirmBtn.dispatchEvent(new MouseEvent(evt, { bubbles: true, cancelable: true, view: window }));
+                                        });
+                                        await new Promise(r => setTimeout(r, 500));
+                                    }
+                                    
+                                    return; // Selected successfully
+                                }
+                            }
+                        }
+                    }
+                };
+
+                if (hasColor && hasSize) {
+                    await searchAndSelect('颜色/尺寸');
+                } else if (hasColor) {
+                    // 如果下拉框里没有单“颜色”，有可能还是得搜颜色/尺寸，这里按精准匹配
+                    await searchAndSelect('颜色');
+                } else if (hasSize) {
+                    await searchAndSelect('尺寸');
+                }
+                
+                // 收起下拉框
+                ['mousedown', 'mouseup', 'click'].forEach(evt => {
+                    document.body.dispatchEvent(new MouseEvent(evt, { bubbles: true, cancelable: true, view: window }));
+                });
+                return clickedCount;
+            }
+            """
+            self.page.evaluate(js_select_spec, {
+                "hasColor": len(self.bundle.unique_colors) > 0,
+                "hasSize": len(self.bundle.unique_sizes) > 0
+            })
+            time.sleep(1.0)  # 给页面时间反应，动态生成颜色/尺寸的输入行
+
             form_items = self.page.locator(".jx-form-item, .sale-attribute-item, .el-form-item").all()
             color_item = None
             size_item = None
@@ -468,131 +562,416 @@ class SkuExecutor:
             return False
 
     # =========================================================================
-    # 步骤 4：批量原生上传 SKU 变体图片
+    # 步骤 4：批量并行上传 SKU 变体图片
     # =========================================================================
     def upload_sku_images(self) -> int:
-        """为每个 SKU 变体行匹配并上传对应的本地 SKU 图片"""
+        """
+        并行模式：预扫描一次性匹配所有行 -> 行内 input 批量直注(零等待，浏览器内部并行上传)
+        -> 弹层流水线兜底 -> 统一轮询验证。受单线程 Playwright 调度架构约束，"并行"体现为：
+        文件注入快速串行 (每次 <100ms)，HTTP 上传请求由浏览器并发发出，不再逐行固定 sleep。
+        """
         self._check_cancelled()
-        self.log(f"正在执行【步骤 4/4 前置】：正在为 {len(self.bundle.items)} 个 SKU 匹配并上传变体图片...", "info")
+        total = len(self.bundle.items)
+        self.log(f"正在执行【步骤 4/4 前置】：SKU 变体图片批量并行上传 (共 {total} 个)...", "info")
 
-        success_count = 0
-        for idx, item in enumerate(self.bundle.items):
-            self._check_cancelled()
+        # ------------------------------------------------------------------
+        # 1. 预扫描：一次性抓取所有行，建立 SkuItem -> 行 的映射
+        # ------------------------------------------------------------------
+        rows = self.page.locator(".picture-table-list .pro-virtual-table__row, .sale-attribute-list tr, .picture-table-list tr").all()
+        matched: Dict[SkuItem, Locator] = {}
+        for item in self.bundle.items:
             if not item.image_full_path or not os.path.exists(item.image_full_path):
                 self.log(f"SKU [{item.color}-{item.size}] 图片不存在: {item.image_name}，跳过", "warn")
                 continue
+            for r in rows:
+                try:
+                    text = r.inner_text()
+                except Exception:
+                    continue
+                if item.color in text and (not item.size or item.size in text):
+                    matched[item] = r
+                    break
+            else:
+                self.log(f"未能找到匹配 SKU [{item.color}-{item.size}] 的行，跳过", "warn")
 
-            # 查找变体表格或变体列表中对应行
-            uploaded = self._upload_single_sku_image(item, idx)
-            if uploaded:
-                success_count += 1
-                self.log(f"[{success_count}/{len(self.bundle.items)}] 成功上传 SKU [{item.color}-{item.size}] 图片: {item.image_name}", "info")
-            time.sleep(0.3)
+        if not matched:
+            self.log("⚠️ 未匹配到任何 SKU 行，请确认变体维度已生成", "warn")
+            return 0
 
-        self.log(f"✅ SKU 变体图片上传完毕，成功上传 {success_count}/{len(self.bundle.items)} 张", "success")
+        # ------------------------------------------------------------------
+        # 2. 批量上传（测试验证方案）：妙手表格行内无常驻 input，
+        #    点击列内上传按钮动态创建 -> ElementHandle 固定引用 ->
+        #    一次注入文件列表实现多图并发上传（HTTP 请求由浏览器并行发出）
+        # ------------------------------------------------------------------
+        injected: Set[SkuItem] = set()
+        for item, row in matched.items():
+            self._check_cancelled()
+            try:
+                # 图片列分配：
+                # Swatch 列（"Swatch Image"列）= SKU 主图单张（第1张主图）
+                # 图库列（"图片"列）= SKU 主图(第一位) + 2detail 全部附图
+                col_gallery, col_swatch = self._classify_image_cells(row)
+                gallery_files = self._build_sku_gallery_files(item)
+
+                swatch_ok = False
+                gallery_ok = False
+
+                # 1. 先上传 Swatch Image 列 (主图第1张)
+                if col_swatch is not None and item.image_full_path:
+                    swatch_ok = self._inject_files_via_cell_button(col_swatch, [item.image_full_path])
+                    time.sleep(0.15)  # 缓冲，避免连续点击冲突
+
+                # 2. 再上传 图库 列 (主图 + 附图)
+                if col_gallery is not None and gallery_files:
+                    gallery_ok = self._inject_files_via_cell_button(col_gallery, gallery_files)
+
+                if not swatch_ok and not gallery_ok:
+                    continue
+
+                injected.add(item)
+                status_desc = []
+                if swatch_ok:
+                    status_desc.append("Swatch(主图第1张)")
+                if gallery_ok:
+                    status_desc.append(f"图库({len(gallery_files)}张)")
+                self.log(f"[并行 {len(injected)}/{len(matched)}] SKU [{item.color}-{item.size}] " + " + ".join(status_desc) + f" 已注入: {item.image_name}", "info")
+                time.sleep(0.1)  # 行间轻微节流，防止服务端限流
+            except Exception:
+                continue
+
+        if injected:
+            self.log(f"✅ 批量直注完成 {len(injected)} 个，浏览器正在后台并行上传...", "info")
+
+        # ------------------------------------------------------------------
+        # 3. 弹层流水线兜底：无行内 input 的项，点击 -> 条件等待 -> 注入即走
+        # ------------------------------------------------------------------
+        fallback_items = [(item, row) for item, row in matched.items() if item not in injected]
+        for item, row in fallback_items:
+            self._check_cancelled()
+            if self._upload_single_sku_image_via_modal(item, row):
+                injected.add(item)
+                self.log(f"[弹层 {len(injected)}/{len(matched)}] SKU [{item.color}-{item.size}] 图片已注入: {item.image_name}", "info")
+
+        # ------------------------------------------------------------------
+        # 4. 统一验证：轮询行内缩略图渲染，替代逐行 sleep(1.0)
+        # ------------------------------------------------------------------
+        self._wait_sku_images_rendered(len(injected))
+
+        success_count = len(injected)
+        self.log(f"✅ SKU 变体图片上传完毕，成功上传 {success_count}/{total} 张", "success")
         return success_count
 
-    def _upload_single_sku_image(self, item: SkuItem, row_idx: int) -> bool:
-        """为单个 SKU 项匹配变体行并上传图片 (含可能存在的主图与色板图)"""
-        try:
-            # 获取所有可能的行
-            rows = self.page.locator(".picture-table-list .pro-virtual-table__row, .sale-attribute-list tr, .picture-table-list tr").all()
-            target_row = None
-            
-            for r in rows:
-                text = r.inner_text()
-                if item.color in text and (not item.size or item.size in text):
-                    target_row = r
-                    break
-                    
-            if not target_row:
-                self.log(f"未能找到匹配 SKU [{item.color}-{item.size}] 的行，跳过", "warn")
-                return False
+    def _classify_image_cells(self, row: Locator) -> tuple:
+        """
+        基于布局特征与列索引识别 SKU 行的两个图片列（参考妙手表格标准 3 列布局）：
+        - 列 0：SKU 选项 (颜色/尺寸选择)
+        - 列 1：图库列（"图片"列）= SKU 主图(第一位) + 2detail 全部图
+        - 列 2：Swatch 列（"Swatch Image"列）= SKU 主图单张 (第1张主图)
+        返回 (gallery_col, swatch_col)
+        """
+        cells = row.locator(".pro-virtual-table__row-cell, td").all()
+        if len(cells) >= 3:
+            return cells[1], cells[2]
+        if len(cells) == 2:
+            return cells[1], None
 
-            # 按照 Chrome 插件的逻辑，单独处理各个列的上传框（主图和Swatch图）
-            cells = target_row.locator(".pro-virtual-table__row-cell, td").all()
-            cells_to_process = []
-            
-            if len(cells) >= 3:
-                cells_to_process = [cells[1], cells[2]]
-            elif len(cells) >= 2:
-                cells_to_process = [cells[1]]
-            else:
-                cells_to_process = [target_row]
-                
-            success = True
-            uploaded_any = False
-            
-            js_find_btn = """
-            (cell) => {
-                let btns = Array.from(cell.querySelectorAll('.add-image-box, .arco-upload, [class*="upload"]'));
-                if (btns.length === 0) {
-                    btns = Array.from(cell.querySelectorAll('*')).filter(b => {
-                        if (b.tagName === 'INPUT') return false;
-                        const cls = (b.className && typeof b.className === 'string') ? b.className.toLowerCase() : '';
-                        const txt = (b.textContent || '').trim();
-                        return cls.includes('upload') || cls.includes('add') || cls.includes('plus') || txt.includes('添加新图片') || txt.includes('Upload');
-                    });
+        gallery_col = None
+        swatch_col = None
+
+        for idx, cell in enumerate(cells[1:], start=1):  # 跳过首列 SKU 选项
+            try:
+                text = (cell.inner_text() or "").strip().lower()
+                if "添加新图片" in text:
+                    if gallery_col is None:
+                        gallery_col = cell
+                elif "swatch" in text:
+                    if swatch_col is None:
+                        swatch_col = cell
+                elif idx == 1 and gallery_col is None:
+                    gallery_col = cell
+                elif idx == 2 and swatch_col is None:
+                    swatch_col = cell
+            except Exception:
+                continue
+
+        if gallery_col is None and len(cells) >= 2:
+            gallery_col = cells[1]
+        if swatch_col is None and len(cells) >= 3:
+            swatch_col = cells[2]
+
+        return gallery_col, swatch_col
+
+    def _build_sku_gallery_files(self, item: SkuItem) -> List[str]:
+        """构建图库列上传内容：SKU 主图固定第一位，其后为 2detail 目录全部图片(按文件名自然排序)"""
+        files: List[str] = []
+        if item.image_full_path and os.path.exists(item.image_full_path):
+            files.append(item.image_full_path)
+        for p in self._natural_sorted(self.bundle.detail_image_full_paths):
+            if os.path.exists(p) and p not in files:
+                files.append(p)
+        return files
+
+    _JS_FIND_UPLOAD_BTN = """
+    (cell) => {
+        if (!cell) return null;
+        // 1. 优先在单元格内找已知的触发容器或类名
+        const selectors = [
+            '.upload-trigger-container',
+            '.upload-trigger-card',
+            '.swatch-image-uploader',
+            '.add-image-box',
+            '.arco-upload',
+            '.jx-upload',
+            '[class*="upload"]',
+            '[class*="swatch"]',
+            '[class*="plus"]'
+        ];
+        for (const sel of selectors) {
+            const el = cell.querySelector(sel);
+            if (el) {
+                const style = window.getComputedStyle(el);
+                if (style.display !== 'none' && style.visibility !== 'hidden') {
+                    return el;
                 }
-                
-                btns = btns.filter(b => {
-                    if (b.disabled || b.classList.contains('is-disabled') || b.classList.contains('disabled')) return false;
-                    const style = window.getComputedStyle(b);
-                    return style.display !== 'none' && style.visibility !== 'hidden' && b.offsetWidth > 0 && b.offsetHeight > 0;
-                });
-                
-                // 保留最深层的元素，避免点击了外层 wrapper
-                btns = btns.filter((btn, index, self) => {
-                    return !self.some((other, otherIndex) => index !== otherIndex && btn.contains(other));
-                });
-                
-                return btns.length > 0 ? btns[0] : null;
             }
-            """
-            
-            for i, cell in enumerate(cells_to_process):
-                self.log(f"正在为 SKU [{item.color}-{item.size}] 扫描第 {i+1} 个图片列...", "info")
-                
-                # 尝试用 JS 获取精准的上传按钮，兼顾所有潜在的 Class 和文本特征
-                btn_handle = cell.evaluate_handle(js_find_btn)
+        }
+        // 2. 查找带加号图标 i/svg 或带 '添加' 文本的元素
+        let btns = Array.from(cell.querySelectorAll('i, svg, button, div, span')).filter(b => {
+            if (b.tagName === 'INPUT') return false;
+            const cls = (b.className && typeof b.className === 'string') ? b.className.toLowerCase() : '';
+            const txt = (b.textContent || '').trim();
+            return cls.includes('plus') || cls.includes('add') || cls.includes('upload') || cls.includes('icon') || txt.includes('添加新图片') || txt.includes('添加');
+        });
+        btns = btns.filter(b => {
+            const style = window.getComputedStyle(b);
+            return style.display !== 'none' && style.visibility !== 'hidden' && b.offsetWidth > 0 && b.offsetHeight > 0;
+        });
+        if (btns.length > 0) return btns[0];
+        
+        // 3. 兜底：直接找单元格内的第一个非空 div
+        const firstDiv = cell.querySelector('div');
+        return firstDiv || cell;
+    }
+    """
+
+    def _inject_files_via_cell_button(self, cell: Locator, files: List[str]) -> bool:
+        """
+        点击单元格内上传按钮，捕获动态创建的 file input（ElementHandle 固定引用），
+        一次性注入文件列表实现多图并发上传（妙手组件原生支持 multiple）。
+        """
+        if cell is None or not files:
+            return False
+        valid_files = [f for f in files if os.path.exists(f)]
+        if not valid_files:
+            return False
+
+        btn = None
+        try:
+            btn_handle = cell.evaluate_handle(self._JS_FIND_UPLOAD_BTN)
+            if btn_handle:
                 btn = btn_handle.as_element()
-                
-                if not btn:
-                    self.log(f"第 {i+1} 个图片列未检测到上传按钮，跳过", "info")
-                    continue
-                    
-                self.log(f"发现该列上传按钮，正在触发图片浮层...", "info")
+        except Exception:
+            pass
+        if not btn:
+            try:
+                btn = cell.as_element()
+            except Exception:
+                pass
+        if not btn:
+            return False
+
+        try:
+            btn.scroll_into_view_if_needed()
+        except Exception:
+            pass
+
+        prev_count = len(self.page.query_selector_all("input[type='file']"))
+        try:
+            btn.click()
+        except Exception:
+            return False
+
+        inp = None
+        deadline = time.time() + 4.0
+        while time.time() < deadline:
+            handles = self.page.query_selector_all("input[type='file']")
+            if len(handles) > prev_count:
+                inp = handles[-1]  # ElementHandle：固定引用，不受后续 DOM 重绘影响
+                break
+            time.sleep(0.15)
+
+        if inp is None:
+            handles = self.page.query_selector_all("input[type='file']")
+            if handles:
+                inp = handles[-1]
+
+        if inp is None:
+            return False
+
+        try:
+            if len(valid_files) > 1:
                 try:
-                    btn.scroll_into_view_if_needed()
-                    btn.click()
-                    time.sleep(1.0)
-                    
-                    modal_inputs = self.page.locator("input[type='file']").all()
-                    if modal_inputs:
-                        modal_inputs[-1].set_input_files(item.image_full_path)
-                        time.sleep(1.0)
-                        uploaded_any = True
-                    else:
-                        self.log("SKU弹窗内未找到上传控件", "warn")
-                        success = False
-                except Exception as ex:
-                    self.log(f"点击该列图片按钮失败: {str(ex)}", "warn")
-                    success = False
+                    inp.evaluate("el => el.setAttribute('multiple', '')")
+                except Exception:
+                    pass
+                inp.set_input_files(valid_files, timeout=10000)
+            else:
+                inp.set_input_files(valid_files[0], timeout=5000)
+            return True
+        except Exception:
+            return False
 
-            if not uploaded_any:
-                # 尝试直接找行内的 input[type=file]
-                inline_inputs = target_row.locator("input[type='file']").all()
-                if inline_inputs:
-                    for inp in inline_inputs:
-                        inp.set_input_files(item.image_full_path)
-                        time.sleep(0.5)
-                    return True
+    @staticmethod
+    def _input_accepts_multiple(input_el) -> bool:
+        """检测 file input 是否支持多文件（含 DOM 属性与 HTML 属性双重判断）"""
+        try:
+            if input_el.evaluate("el => el.multiple"):
+                return True
+        except Exception:
+            pass
+        try:
+            return input_el.get_attribute("multiple") is not None
+        except Exception:
+            return False
 
-            return success and uploaded_any
+    @staticmethod
+    def _natural_sorted(paths: List[str]) -> List[str]:
+        """文件名自然排序：数字部分按数值比较（detail_2.jpg 排在 detail_10.jpg 前）"""
+        def key(p: str):
+            name = os.path.basename(p)
+            return [int(t) if t.isdigit() else t.lower() for t in re.split(r'(\d+)', name)]
+        return sorted(paths, key=key)
 
+    def _upload_single_sku_image_via_modal(self, item: SkuItem, target_row: Locator) -> bool:
+        """兜底路径：点击行内上传按钮捕获动态 input 后注入。
+        Swatch 列注入 SKU 主图（第1张）；图库列注入 SKU 主图(第一位) + 2detail 全部图。"""
+        try:
+            col_gallery, col_swatch = self._classify_image_cells(target_row)
+            gallery_files = self._build_sku_gallery_files(item)
+
+            uploaded_any = False
+            # 1. Swatch 列
+            if col_swatch is not None and item.image_full_path:
+                if self._inject_files_via_cell_button(col_swatch, [item.image_full_path]):
+                    uploaded_any = True
+                    time.sleep(0.3)
+                else:
+                    self.log(f"SKU [{item.color}-{item.size}] Swatch 列未成功注入", "warn")
+
+            # 2. 图库列
+            if col_gallery is not None and gallery_files:
+                if self._inject_files_via_cell_button(col_gallery, gallery_files):
+                    uploaded_any = True
+                else:
+                    self.log(f"SKU [{item.color}-{item.size}] 图库列未成功注入", "warn")
+
+            return uploaded_any
         except Exception as e:
             self.log(f"上传 SKU [{item.color}-{item.size}] 图片异常: {str(e)}", "warn")
-        return False
+            return False
+
+    # =========================================================================
+    # 测试：第一个 SKU 单行多图同时上传验证
+    # =========================================================================
+    def test_upload_first_sku_images(self) -> bool:
+        """仅测试：对第一个 SKU 对应行，同时测试注入 Swatch Image (主图第1张) 与 图片列 (主图+附图多图)。"""
+        self._check_cancelled()
+        if not self.bundle.items:
+            self.log("⚠️ 无 SKU 数据，请先选择数据文件", "warn")
+            return False
+
+        item = self.bundle.items[0]
+        self.log(f"🧪【测试模式】仅处理第一个 SKU [{item.color}-{item.size}] 的 Swatch 与图片列", "info")
+
+        gallery_files = self._build_sku_gallery_files(item)
+        names = [os.path.basename(f) for f in gallery_files]
+        self.log(f"待注入图库 {len(gallery_files)} 张: {', '.join(names)}", "info")
+
+        if not item.image_full_path or not os.path.exists(item.image_full_path):
+            self.log(f"⚠️ SKU 主图不存在: {item.image_name}", "warn")
+            return False
+
+        # 1. 匹配第一个 SKU 所在行（匹配不到则回退第一行）
+        rows = self.page.locator(".picture-table-list .pro-virtual-table__row, .sale-attribute-list tr, .picture-table-list tr").all()
+        target_row = None
+        for r in rows:
+            try:
+                text = r.inner_text()
+            except Exception:
+                continue
+            if item.color in text and (not item.size or item.size in text):
+                target_row = r
+                break
+        if target_row is None:
+            if rows:
+                target_row = rows[0]
+                self.log("未精确匹配到 SKU 行，回退使用第一行", "warn")
+            else:
+                self.log("⚠️ 页面上未找到任何 SKU 行", "warn")
+                return False
+
+        # 2. 定位图片列与 Swatch 列
+        col_gallery, col_swatch = self._classify_image_cells(target_row)
+
+        swatch_ok = False
+        if col_swatch is not None:
+            self.log("正在注入 Swatch Image (主图第1张)...", "info")
+            swatch_ok = self._inject_files_via_cell_button(col_swatch, [item.image_full_path])
+            if swatch_ok:
+                self.log(f"✅ Swatch Image 注入成功: {item.image_name}", "info")
+                time.sleep(0.3)
+            else:
+                self.log("⚠️ Swatch Image 注入失败", "warn")
+
+        gallery_ok = False
+        target_gallery = col_gallery if col_gallery is not None else target_row
+        self.log(f"正在注入图库列 (主图+附图共 {len(gallery_files)} 张)...", "info")
+        gallery_ok = self._inject_files_via_cell_button(target_gallery, gallery_files)
+        if gallery_ok:
+            self.log(f"✅ 图库列多图注入成功 ({len(gallery_files)} 张)", "info")
+        else:
+            self.log("⚠️ 图库列注入失败", "warn")
+
+        # 3. 校验：观察页面该行缩略图数量
+        time.sleep(2.0)
+        try:
+            thumbs = target_row.evaluate("""r =>
+                r.querySelectorAll('img[src^="http"], img[src^="blob:"]').length
+            """)
+            self.log(f"页面校验：该行当前缩略图数量 = {thumbs}", "info")
+        except Exception:
+            pass
+
+        if swatch_ok or gallery_ok:
+            self.log("🧪 测试注入完成，请观察该行 Swatch 与图片列是否出现缩略图", "success")
+            return True
+        else:
+            self.log("❌ 测试注入未成功，请检查单元格结构与浏览器状态", "error")
+            return False
+
+    def _wait_sku_images_rendered(self, expected: int, timeout: float = 20.0):
+        """统一轮询等待 SKU 行内缩略图渲染完成（尽力而为，超时不阻塞主流程）"""
+        if expected <= 0:
+            return
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            self._check_cancelled()
+            try:
+                done = self.page.evaluate("""() => {
+                    const rows = document.querySelectorAll('.picture-table-list .pro-virtual-table__row, .picture-table-list tr');
+                    let count = 0;
+                    rows.forEach(r => {
+                        if (r.querySelector('img[src^="http"], img[src^="blob:"], [class*="picture"] img, [class*="upload"] img')) count++;
+                    });
+                    return count;
+                }""")
+                if done >= expected:
+                    self.log(f"✅ 检测到 {done} 行 SKU 图片已渲染完成", "info")
+                    return
+            except Exception:
+                pass
+            time.sleep(0.5)
+        self.log(f"⚠️ 图片渲染验证超时 ({timeout}s)，部分图片可能仍在上传中，请稍后自行确认", "warn")
 
     # =========================================================================
     # 步骤 5：虚拟表格滚动匹配与全自动批量填表
@@ -698,38 +1077,79 @@ class SkuExecutor:
         try:
             selects = row.locator(".jx-select, .el-select").all()
             target_select = None
+            
+            # 由于可能没有预选项文本，我们可以尝试找所有 select，并排除明显是编码类型的
+            possible_selects = []
             for sel in selects:
-                t = sel.inner_text()
-                # 排除带有 UPC / EAN / ASIN 类型的选择框
-                if not any(k in t for k in ["UPC", "EAN", "ASIN", "GTIN"]):
-                    target_select = sel
-                    break
-
-            if not target_select and selects:
+                t = sel.inner_text().upper()
+                if not any(k in t for k in ["UPC", "EAN", "ASIN", "GTIN", "GCID"]):
+                    possible_selects.append(sel)
+                    
+            if possible_selects:
+                # 物品状况通常在右侧，或者直接取排除后的第一个
+                target_select = possible_selects[-1]
+            elif selects:
                 target_select = selects[-1]
 
             if target_select:
-                target_select.click()
-                time.sleep(0.2)
+                # 使用 evaluate 模拟真实点击，防止 Playwright 原生 click 被拦截
+                js_click_select = """(el) => {
+                    ['mousedown', 'mouseup', 'click'].forEach(evt => {
+                        el.dispatchEvent(new MouseEvent(evt, { bubbles: true, cancelable: true, view: window }));
+                    });
+                }"""
+                target_select.evaluate(js_click_select)
+                time.sleep(0.4)
 
-                # 选择匹配的下拉菜单项
+                # 增加一步：如果有 input，就先输入文本过滤一下，这样能确保选项出现
+                try:
+                    inp = target_select.locator("input")
+                    if inp.count() > 0:
+                        inp.fill(condition_text)
+                        time.sleep(0.4)
+                except Exception:
+                    pass
+
+                # 选择匹配的下拉菜单项，必须一模一样
                 js_select = """
                 (cond) => {
                     const items = Array.from(document.querySelectorAll('.jx-select-dropdown__item, .el-select-dropdown__item, .jx-dropdown-menu__item, .el-select-dropdown li, .jx-select-dropdown li'));
-                    const visible = items.filter(el => el.getBoundingClientRect().width > 0);
-                    const match = visible.find(el => el.textContent.trim() === cond);
+                    const visible = items.filter(el => {
+                        const rect = el.getBoundingClientRect();
+                        return rect.width > 0 && rect.height > 0 && window.getComputedStyle(el).display !== 'none';
+                    });
+                    
+                    let match = visible.find(el => {
+                        // 强制精准匹配
+                        return el.innerText.trim() === cond.trim();
+                    });
+                    
                     if (match) {
-                        match.click();
+                        match.scrollIntoView({ block: 'center' });
+                        ['mousedown', 'mouseup', 'click'].forEach(evt => {
+                            match.dispatchEvent(new MouseEvent(evt, { bubbles: true, cancelable: true, view: window }));
+                        });
+                        if (typeof match.click === 'function') match.click();
                         return true;
                     }
                     return false;
                 }
                 """
                 ok = self.page.evaluate(js_select, condition_text)
+                
+                # 收起下拉框
+                self.page.evaluate("""() => {
+                    ['mousedown', 'mouseup', 'click'].forEach(evt => {
+                        document.body.dispatchEvent(new MouseEvent(evt, { bubbles: true, cancelable: true, view: window }));
+                    });
+                }""")
+                time.sleep(0.2)
+                
+                # 去掉了兜底的 press("Enter") 逻辑，防止它自动选中包含匹配的不准确选项
                 if not ok:
-                    target_select.locator("input").press("Enter")
-        except Exception:
-            pass
+                    self.log(f"未能找到与 '{condition_text}' 完全一致的下拉选项，跳过选择", "warn")
+        except Exception as e:
+            self.log(f"填充物品状况时发生错误: {e}", "warn")
 
     def _scroll_virtual_table_down(self) -> Dict[str, Any]:
         """向下滚动虚拟表格一行/一屏的距离"""

@@ -10,3 +10,6 @@ auto_fill_v3.js
 # Python 缓存
 __pycache__/
 *.pyc
+1688_*/
+test产品试验品/
+sku_data_exports/

@@ -645,7 +645,7 @@
         console.log(`已定位到 [${item.color}-${item.size}] 的 SKU 图片行`, targetRow);
 
         async function doUpload(scope, typeName) {
-            const selectors = '.add-image-box, .arco-upload, .upload-icon, [class*="upload-box"], [class*="upload-btn"], [class*="UploadBtn"], .pro-upload, [class*="upload"]';
+            const selectors = '.add-image-box, .arco-upload, .upload-icon, [class*="upload-box"], [class*="upload-btn"], [class*="UploadBtn"], .pro-upload, [class*="upload"], [class*="swatch"], [class*="picture-card"]';
             let uploadBtns = Array.from(scope.querySelectorAll(selectors));
             
             if (uploadBtns.length === 0 && scope === targetRow) {
@@ -660,9 +660,10 @@
             }
             // 兜底：寻找带有加号或者上传提示的任意元素
             if (uploadBtns.length === 0) {
-                uploadBtns = Array.from(scope.querySelectorAll('div, span, button, i')).filter(b => {
+                uploadBtns = Array.from(scope.querySelectorAll('div, span, button, i, svg')).filter(b => {
+                    if (b.tagName === 'INPUT') return false;
                     const className = (b.className && typeof b.className === 'string') ? b.className.toLowerCase() : '';
-                    return className.includes('upload') || className.includes('add');
+                    return className.includes('upload') || className.includes('add') || className.includes('plus') || className.includes('icon') || className.includes('swatch');
                 });
             }
             uploadBtns = uploadBtns.filter((btn, index, self) => {
@@ -688,7 +689,7 @@
             targetFileForUpload = null;
             
             if (success) {
-                await new Promise(r => setTimeout(r, 1500));
+                await new Promise(r => setTimeout(r, 1200));
                 console.log(`[${item.color}-${item.size}] ${typeName} 图片上传完成`);
                 return true;
             } else {
@@ -700,18 +701,19 @@
         const pictureCell = findPictureCellInRow(targetRow);
         const scope = pictureCell || targetRow;
         
-        // 1. 上传第一列图片
-        const success1 = await doUpload(scope, '图片');
-        
-        // 2. 尝试上传 Swatch Image 列
-        let success2 = true;
+        // 1. 先上传 Swatch Image 列 (主图第1张)
+        let successSwatch = true;
         const cells = Array.from(targetRow.querySelectorAll('.pro-virtual-table__row-cell'));
         if (cells.length >= 3) {
             const swatchCell = cells[2];
-            success2 = await doUpload(swatchCell, 'Swatch');
+            successSwatch = await doUpload(swatchCell, 'Swatch');
+            await new Promise(r => setTimeout(r, 300));
         }
 
-        return success1 && success2;
+        // 2. 再上传 图片 列 (主图)
+        const successPicture = await doUpload(scope, '图片');
+
+        return successPicture || successSwatch;
     }
 
     // 辅助函数：模拟 Vue 输入

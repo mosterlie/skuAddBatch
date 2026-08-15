@@ -406,8 +406,7 @@
         }
 
         file.uid = Date.now() + Math.floor(Math.random() * 1000);
-        console.log(`准备自动上传 [${item.color}-${item.size}] 图片: ${file.name}`);
-        targetFileForUpload = file;
+        console.log(`准备自动上传 [${item.color}-${item.size}] 图片与Swatch: ${file.name}`);
 
         // 定位 SKU 图片表格中的目标行
         const targetRow = findSkuPictureRow(item, rowIndex);
@@ -417,61 +416,76 @@
         }
         console.log(`已定位到 [${item.color}-${item.size}] 的 SKU 图片行`, targetRow);
 
-        // 只在"图片"列内查找上传按钮（排除 Swatch Image 列和产品图片区）
+        async function doUpload(scope, typeName) {
+            const selectors = '.add-image-box, .arco-upload, .upload-icon, [class*="upload-box"], [class*="upload-btn"], [class*="UploadBtn"], .pro-upload, [class*="upload"], [class*="swatch"]';
+            let uploadBtns = Array.from(scope.querySelectorAll(selectors));
+            
+            if (uploadBtns.length === 0 && scope === targetRow) {
+                uploadBtns = Array.from(targetRow.querySelectorAll('*')).filter(b => {
+                    const cell = b.closest('.pro-virtual-table__row-cell');
+                    const txt = b.textContent || '';
+                    return cell && (txt.includes('添加新图片') || txt.includes('Upload'));
+                });
+            }
+            if (uploadBtns.length === 0) {
+                uploadBtns = Array.from(scope.querySelectorAll(selectors));
+            }
+            // 兜底：寻找带有加号或者上传提示的任意元素
+            if (uploadBtns.length === 0) {
+                uploadBtns = Array.from(scope.querySelectorAll('div, span, button, i, svg')).filter(b => {
+                    if (b.tagName === 'INPUT') return false;
+                    const className = (b.className && typeof b.className === 'string') ? b.className.toLowerCase() : '';
+                    return className.includes('upload') || className.includes('add') || className.includes('plus') || className.includes('icon') || className.includes('swatch');
+                });
+            }
+            uploadBtns = uploadBtns.filter((btn, index, self) => {
+                return !self.some((other, otherIndex) => index !== otherIndex && other.contains(btn));
+            });
+
+            if (uploadBtns.length === 0) {
+                console.warn(`[${item.color}-${item.size}] 的 ${typeName} 列未找到上传按钮`);
+                return false;
+            }
+
+            console.log(`找到 [${item.color}-${item.size}] ${typeName} 列的上传按钮，准备触发上传...`);
+            const btn = uploadBtns[0];
+            const interceptPromise = interceptFileInput(file, 4000);
+            
+            targetFileForUpload = file;
+            ['mousedown', 'mouseup', 'click'].forEach(evt => {
+                btn.dispatchEvent(new MouseEvent(evt, { bubbles: true, cancelable: true, view: window }));
+            });
+            if (typeof btn.click === 'function') btn.click();
+            
+            const success = await interceptPromise;
+            targetFileForUpload = null;
+            
+            if (success) {
+                await new Promise(r => setTimeout(r, 1200));
+                console.log(`[${item.color}-${item.size}] ${typeName} 图片上传完成`);
+                return true;
+            } else {
+                console.warn(`[${item.color}-${item.size}] ${typeName} 图片上传失败：未捕获到 file input`);
+                return false;
+            }
+        }
+
         const pictureCell = findPictureCellInRow(targetRow);
         const scope = pictureCell || targetRow;
-
-        let uploadBtns = Array.from(scope.querySelectorAll('.add-image-box'));
-        // 若图片列没有按钮，降级到整行查找（排除 Swatch 列：Swatch 列通常不含"添加新图片"）
-        if (uploadBtns.length === 0) {
-            uploadBtns = Array.from(targetRow.querySelectorAll('.add-image-box')).filter(b => {
-                const cell = b.closest('.pro-virtual-table__row-cell');
-                return cell && cell.textContent.includes('添加新图片');
-            });
-        }
-        // 兜底：行内所有 add-image-box
-        if (uploadBtns.length === 0) {
-            uploadBtns = Array.from(targetRow.querySelectorAll('.add-image-box'));
+        
+        // 1. 上传 Swatch Image 列 (主图第1张)
+        let successSwatch = true;
+        const cells = Array.from(targetRow.querySelectorAll('.pro-virtual-table__row-cell'));
+        if (cells.length >= 3) {
+            const swatchCell = cells[2];
+            successSwatch = await doUpload(swatchCell, 'Swatch');
+            await new Promise(r => setTimeout(r, 300));
         }
 
-        // 去重嵌套按钮 (只保留最外层)
-        uploadBtns = uploadBtns.filter((btn, index, self) => {
-            return !self.some((other, otherIndex) => index !== otherIndex && other.contains(btn));
-        });
+        // 2. 上传 图片 列 (主图)
+        const successPicture = await doUpload(scope, '图片');
 
-        if (uploadBtns.length === 0) {
-            console.warn(`[${item.color}-${item.size}] 的图片列未找到上传按钮`);
-            return false;
-        }
-
-        console.log(`找到 [${item.color}-${item.size}] 图片列的 ${uploadBtns.length} 个上传按钮，准备触发上传...`, uploadBtns);
-
-        // 只点击第一个上传按钮（每行只需上传一张 SKU 图片）
-        const btn = uploadBtns[0];
-        console.log(`点击上传按钮...`, btn);
-
-        // 启动 file input 拦截（在点击之前就开始监听）
-        const interceptPromise = interceptFileInput(file, 4000);
-
-        // 触发点击
-        ['mousedown', 'mouseup', 'click'].forEach(evt => {
-            btn.dispatchEvent(new MouseEvent(evt, { bubbles: true, cancelable: true, view: window }));
-        });
-        if (typeof btn.click === 'function') btn.click();
-
-        // 等待拦截结果
-        const success = await interceptPromise;
-        targetFileForUpload = null;
-
-        if (success) {
-            // 等待 Vue 处理上传并渲染图片预览
-            await new Promise(r => setTimeout(r, 1500));
-            console.log(`[${item.color}-${item.size}] 图片上传完成`);
-            return true;
-        } else {
-            console.warn(`[${item.color}-${item.size}] 图片上传失败：未捕获到 file input`);
-            return false;
-        }
+        return successPicture || successSwatch;
     }
 
     // 辅助函数：模拟 Vue 输入
