@@ -3,3 +3,10 @@
 !test_sku.txt
 !requirements.txt
 auto_fill_v3.js
+
+# macOS 系统文件
+.DS_Store
+
+# Python 缓存
+__pycache__/
+*.pyc

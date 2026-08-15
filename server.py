@@ -24,7 +24,7 @@ class ImageServerHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 
                 try:
-                    files = [f for f in os.listdir(file_path) if os.path.isfile(os.path.join(file_path, f))]
+                    files = [f for f in os.listdir(file_path) if os.path.isfile(os.path.join(file_path, f)) and f.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif'))]
                     # Sort files so that the order is deterministic (e.g. 1.jpg, 2.jpg)
                     files.sort()
                     self.wfile.write(json.dumps(files).encode('utf-8'))

@@ -963,8 +963,6 @@
             document.getElementById('sku-status').innerHTML = '步骤 5/6: 正在自动上传产品图片...';
             await uploadAllProductImages();
             
-            alert("✅ 产品主副图上传完毕！\n\n如果网页还在显示进度条，请等待图片全部出现。\n确认没问题后，点击【确定】继续进行第二步：挨个上传 SKU 变体图。");
-            
             document.getElementById('sku-status').innerHTML = '步骤 6/6: 正在给各 SKU 变体上传主图...';
             if (typeof uploadSingleSkuImage === 'function' && parsedData.length > 0) {
                 for (let i = 0; i < parsedData.length; i++) {
@@ -977,6 +975,7 @@
             }
             
             document.getElementById('sku-status').innerHTML = '✅ 全自动提效完成！';
+            alert("✅ 全自动执行完毕！所有属性数据、产品主副图以及 SKU 图片均已处理完毕。");
             
         } catch (err) {
             console.error(err);
