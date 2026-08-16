@@ -39,6 +39,7 @@ hiddenimports = [
     'gui',
     'gui.app_window',
     'gui.preview_1688_dialog',
+    'gui.floating_dock',
     'config',
 ]
 

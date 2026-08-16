@@ -19,6 +19,7 @@ from core.login_helper import MiaoshouLoginHelper, load_saved_credentials, save_
 from core.plugin_server import PluginServerManager
 from core.plugin_overlay_injector import inject_plugin_ui_into_1688_page
 from gui.preview_1688_dialog import Preview1688Dialog
+from gui.floating_dock import FloatingDock
 
 
 class SkuAppGUI:
@@ -36,6 +37,7 @@ class SkuAppGUI:
         self.current_executor: Optional[SkuExecutor] = None
         self.available_tabs: List[TabInfo] = []
         self.is_running = False
+        self.floating_dock: Optional[FloatingDock] = None
 
         # 启动 1688 插件与 calcfee 本地专属守护服务 (端口 31416)，并注入回调
         PluginServerManager.start_server(
@@ -49,8 +51,9 @@ class SkuAppGUI:
         self._setup_styles()
         self._create_widgets()
 
-        # 启动后自动检查一次浏览器状态
+        # 启动后自动检查一次浏览器状态与初始化边缘悬浮岛
         self.root.after(500, self._async_refresh_browser_status)
+        self.root.after(1000, self._init_floating_dock)
 
     def _setup_styles(self):
         """配置现代化主题样式"""
@@ -101,6 +104,24 @@ class SkuAppGUI:
 
         sub_label = ttk.Label(header_frame, text="商品采集 • 数据整理 • 批量录入一站式助手", font=("Helvetica", 9), foreground=self.text_secondary)
         sub_label.pack(side=tk.LEFT, padx=(10, 0), pady=(4, 0))
+
+        # 快捷唤起边缘悬浮岛按钮
+        btn_dock = tk.Button(
+            header_frame,
+            text="⚡ 唤起边缘悬浮岛",
+            font=("Helvetica", 9, "bold"),
+            bg="#6366f1",
+            fg="#ffffff",
+            activebackground="#4f46e5",
+            activeforeground="#ffffff",
+            highlightbackground="#6366f1",
+            relief="flat",
+            cursor="hand2",
+            padx=10,
+            pady=3,
+            command=self._on_toggle_floating_dock
+        )
+        btn_dock.pack(side=tk.RIGHT)
 
         # 2. 顶级主菜单现代分段导航栏 (Segmented Tab Bar)
         nav_container = tk.Frame(main_container, bg="#e2e8f0", padx=3, pady=3)
@@ -183,6 +204,22 @@ class SkuAppGUI:
 
         if idx == 0:
             self._async_probe_1688_info()
+
+    def _init_floating_dock(self):
+        """初始化屏幕边缘吸附快捷悬浮岛"""
+        if not self.floating_dock:
+            try:
+                self.floating_dock = FloatingDock(master=self.root, main_app=self, browser_mgr=self.browser_mgr)
+            except Exception:
+                pass
+
+    def _on_toggle_floating_dock(self):
+        """手动切换/呼出边缘快捷悬浮岛并最小化主窗口"""
+        self._init_floating_dock()
+        if self.floating_dock:
+            self.floating_dock.show()
+            self.root.iconify()
+            self.append_log("⚡ 已唤出屏幕边缘快捷悬浮岛，鼠标移动到屏幕右侧把手即可唤醒快捷操作！", "info")
 
     def _build_collect_tab(self, parent):
         """构建【商品采集】菜单页面"""
