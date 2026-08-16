@@ -46,6 +46,8 @@ class SkuAppGUI:
             on_scan_callback=self._on_plugin_scan_callback,
             on_export_callback=self._on_calcfee_export_callback
         )
+        from core.plugin_server import PluginServerHandler
+        PluginServerHandler.on_dock_cmd_callback = self._on_dock_cmd
 
         # 初始化样式与界面布局
         self._setup_styles()
@@ -204,6 +206,32 @@ class SkuAppGUI:
 
         if idx == 0:
             self._async_probe_1688_info()
+
+    def _on_dock_cmd(self, action):
+        """处理来自悬浮岛的 HTTP 接口命令，转发到 Tkinter 主线程"""
+        if self.root:
+            self.root.after(0, lambda: self._execute_dock_cmd(action))
+
+    def _execute_dock_cmd(self, action):
+        if action == '1688':
+            self._on_open_1688()
+        elif action == 'preview':
+            self._on_download_1688()
+        elif action == 'calc':
+            self._on_open_sku_calc()
+        elif action == 'miaoshou':
+            self._on_launch_browser()
+        elif action == 'batch':
+            self._on_start_execution()
+        elif action == 'main':
+            try:
+                if self.root.state() in ("iconic", "withdrawn"):
+                    self.root.deiconify()
+                    self.root.state("normal")
+                self.root.lift()
+                self.root.focus_force()
+            except Exception:
+                pass
 
     def _init_floating_dock(self):
         """初始化屏幕边缘吸附快捷悬浮岛"""

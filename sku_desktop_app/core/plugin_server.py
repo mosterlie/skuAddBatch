@@ -32,6 +32,7 @@ class PluginServerHandler(BaseHTTPRequestHandler):
     last_saved_dir = ""
     on_scan_callback = None  # 外部注入 GUI 回调函数 (title, url) -> None
     on_calcfee_export_callback = None  # 外部注入 GUI 回调函数 (file_path, count) -> None
+    on_dock_cmd_callback = None  # 外部注入悬浮岛命令回调 (action) -> None
     last_exported_sku_json = ""
 
     def _set_cors_headers(self):
@@ -47,6 +48,22 @@ class PluginServerHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path.lstrip("/") or "popup.html"
+
+        # 0. API: 悬浮岛命令中转
+        if path == "api/dock/cmd":
+            query_params = urllib.parse.parse_qs(parsed.query)
+            action = query_params.get("action", [None])[0]
+            if action and PluginServerHandler.on_dock_cmd_callback:
+                try:
+                    PluginServerHandler.on_dock_cmd_callback(action)
+                except Exception:
+                    pass
+            self.send_response(200)
+            self._set_cors_headers()
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(json.dumps({"success": True}).encode("utf-8"))
+            return
 
         # 1. API: 扫描当前 1688 页面
         if path == "api/scan":
