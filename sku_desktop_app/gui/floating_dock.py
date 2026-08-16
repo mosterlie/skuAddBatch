@@ -1,9 +1,9 @@
 """
 桌面边缘吸附快捷唤醒小程序 (Edge Cute Floating Dock)
-- 默认在桌面边缘隐藏为可爱的萌宠把手（🐱 萌猫），占用极小空间
-- 利用 macOS AppKit 原生系统级置顶（NSStatusWindowLevel + CanJoinAllSpaces），切换到任何第三方应用（Chrome、微信、VSCode等）均常驻屏幕最前台可见
-- 鼠标移动过去瞬间滑出精美的超紧凑快捷操作卡片
-- 鼠标移开自动收起，支持 📌 钉住模式与一键直达
+- 默认在桌面边缘隐藏为一个极小、可爱的微型萌宠图标（🐱 38x38 圆角小猫咪图标）
+- 鼠标放上去瞬间展开为超紧凑的快捷功能卡片
+- 鼠标离开自动收缩为 38x38 纯图标，支持 📌 钉住模式
+- 利用 macOS AppKit 原生系统级置顶（NSStatusWindowLevel + CanJoinAllSpaces），跨应用与全屏常驻
 """
 import os
 import sys
@@ -20,14 +20,12 @@ from core.browser_manager import BrowserManager
 
 class FloatingDock:
     """
-    屏幕边缘超紧凑萌系快捷唤醒小窗（跨应用全局常驻置顶）
+    屏幕边缘超紧凑萌宠快捷悬浮小窗（默认仅露出 38x38 小图标）
     """
 
     EXPANDED_WIDTH = 195
     EXPANDED_HEIGHT = 285
-    HANDLE_WIDTH = 32
-    ANIM_STEPS = 6
-    ANIM_INTERVAL_MS = 8
+    ICON_SIZE = 38
 
     def __init__(self, master=None, main_app=None, browser_mgr: Optional[BrowserManager] = None):
         self.main_app = main_app
@@ -54,29 +52,28 @@ class FloatingDock:
         # 状态变量
         self.is_expanded = False
         self.is_pinned = False
-        self._animating = False
         self._collapse_timer = None
 
-        # 屏幕几何尺寸计算（右侧居中吸附）
+        # 屏幕尺寸计算
         self.screen_width = self.root.winfo_screenwidth()
         self.screen_height = self.root.winfo_screenheight()
-        self.pos_y = max(100, int((self.screen_height - self.EXPANDED_HEIGHT) / 2))
-
-        self.x_collapsed = self.screen_width - self.HANDLE_WIDTH
-        self.x_expanded = self.screen_width - self.EXPANDED_WIDTH
-        self.current_x = self.x_collapsed
-
-        # 初始定位在屏幕右侧收起位置
-        self.root.geometry(f"{self.EXPANDED_WIDTH}x{self.EXPANDED_HEIGHT}+{self.current_x}+{self.pos_y}")
+        # 居中 Y 坐标
+        self.center_y = max(100, int(self.screen_height / 2))
+        self.collapsed_y = self.center_y - self.ICON_SIZE // 2
+        self.expanded_y = self.center_y - self.EXPANDED_HEIGHT // 2
 
         # 视觉主题配色
         self.bg_color = "#ffffff"
-        self.handle_bg = "#6366f1"
+        self.badge_bg = "#6366f1"
+        self.badge_hover_bg = "#4f46e5"
         self.text_primary = "#0f172a"
         self.text_secondary = "#64748b"
 
         self._build_ui()
         self._bind_events()
+
+        # 初始设置为收起状态（仅 38x38 小图标）
+        self._apply_collapsed_state()
 
         # 核心：配置 macOS 原生系统级全局置顶（跨所有应用/全屏桌面保持可见）
         self.root.after(100, self._set_macos_system_topmost)
@@ -85,76 +82,52 @@ class FloatingDock:
         # 启动后检测一次浏览器状态
         self.root.after(500, self._check_browser_status_async)
 
-    def _set_macos_system_topmost(self):
-        """利用 macOS AppKit 原生接口将悬浮窗提升为全局系统级悬浮 (跨所有第三方应用与全屏桌面均保持可见)"""
-        if sys.platform != "darwin":
-            return
-        try:
-            import AppKit
-            self.root.update_idletasks()
-            target_h = self.EXPANDED_HEIGHT
-
-            for win in AppKit.NSApp.windows():
-                frame = win.frame()
-                if abs(frame.size.height - target_h) < 20:
-                    # 提升到状态栏级/浮动窗口层级（高于普通应用和全屏 Chrome 窗口）
-                    win.setLevel_(AppKit.NSStatusWindowLevel)
-                    # 允许跨所有桌面 Space 共享、支持全屏辅助显示、固定不随切换丢失
-                    win.setCollectionBehavior_(
-                        AppKit.NSWindowCollectionBehaviorCanJoinAllSpaces |
-                        AppKit.NSWindowCollectionBehaviorFullScreenAuxiliary |
-                        AppKit.NSWindowCollectionBehaviorStationary
-                    )
-                    # 彻底解决切换应用时悬浮窗消失的问题：切换应用时不隐藏！
-                    win.setHidesOnDeactivate_(False)
-        except Exception:
-            pass
-
-    def _maintain_macos_topmost(self):
-        """定期维护系统置顶状态，防止偶发降级"""
-        try:
-            self._set_macos_system_topmost()
-            self.root.lift()
-        except Exception:
-            pass
-        self.root.after(3000, self._maintain_macos_topmost)
-
     def _build_ui(self):
-        """构建超紧凑萌系悬浮小窗布局"""
-        # 最外层容器
-        self.outer_frame = tk.Frame(
+        """构建两套视图：1. 纯微型图标视图（收起时），2. 完整卡片视图（展开时）"""
+        self.root.configure(bg=self.bg_color)
+
+        # ═══════════════════════════════════════════════════════════
+        # 视图 1：纯微型萌宠图标视图 (38x38)
+        # ═══════════════════════════════════════════════════════════
+        self.icon_badge_frame = tk.Frame(
             self.root,
-            bg=self.bg_color,
+            bg=self.badge_bg,
+            cursor="hand2",
             highlightbackground="#818cf8",
             highlightthickness=1,
             bd=0
         )
-        self.outer_frame.pack(fill=tk.BOTH, expand=True)
 
-        # 1. 边缘萌宠把手 (Collapsed Handle - 可爱猫咪头像)
-        self.handle_frame = tk.Frame(self.outer_frame, bg=self.handle_bg, width=self.HANDLE_WIDTH, cursor="hand2")
-        self.handle_frame.pack(side=tk.LEFT, fill=tk.Y)
-        self.handle_frame.pack_propagate(False)
+        self.lbl_cute_icon = tk.Label(
+            self.icon_badge_frame,
+            text="🐱",
+            font=("Helvetica", 17),
+            bg=self.badge_bg,
+            fg="#ffffff"
+        )
+        self.lbl_cute_icon.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
 
-        # 把手内居中的萌宠图标与微型指示
-        lbl_cat = tk.Label(self.handle_frame, text="🐱", font=("Helvetica", 14), bg=self.handle_bg, fg="#ffffff")
-        lbl_cat.pack(pady=(10, 2))
-
-        lbl_paw = tk.Label(self.handle_frame, text="🐾", font=("Helvetica", 10), bg=self.handle_bg, fg="#ffffff")
-        lbl_paw.pack(pady=(2, 6))
-
-        # 2. 展开后的超紧凑核心快捷卡片面板
-        self.content_panel = tk.Frame(self.outer_frame, bg=self.bg_color, padx=6, pady=6)
-        self.content_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        # ═══════════════════════════════════════════════════════════
+        # 视图 2：展开后的超紧凑核心快捷卡片面板 (195x285)
+        # ═══════════════════════════════════════════════════════════
+        self.card_frame = tk.Frame(
+            self.root,
+            bg=self.bg_color,
+            highlightbackground="#818cf8",
+            highlightthickness=1,
+            bd=0,
+            padx=7,
+            pady=6
+        )
 
         # 顶部标题栏：萌猫标题 + 状态小圆点 + 📌 钉住 + ✕
-        header_row = tk.Frame(self.content_panel, bg=self.bg_color)
+        header_row = tk.Frame(self.card_frame, bg=self.bg_color)
         header_row.pack(fill=tk.X, pady=(0, 4))
 
         self.status_dot = tk.Label(header_row, text="●", font=("Helvetica", 10), bg=self.bg_color, fg="#dc2626")
         self.status_dot.pack(side=tk.LEFT, padx=(0, 3))
 
-        title_lbl = tk.Label(header_row, text="妙手萌盒", font=("Helvetica", 9, "bold"),
+        title_lbl = tk.Label(header_row, text="妙手萌盒 🐱", font=("Helvetica", 9, "bold"),
                              bg=self.bg_color, fg=self.text_primary)
         title_lbl.pack(side=tk.LEFT)
 
@@ -183,7 +156,7 @@ class FloatingDock:
 
         for text, bg_c, fg_c, cmd in btn_configs:
             btn = tk.Button(
-                self.content_panel,
+                self.card_frame,
                 text=text,
                 font=("Helvetica", 9, "bold"),
                 bg=bg_c,
@@ -203,7 +176,7 @@ class FloatingDock:
 
         # 底部展开主窗口按钮
         btn_show_main = tk.Button(
-            self.content_panel,
+            self.card_frame,
             text="🖥️ 完整控制台",
             font=("Helvetica", 8, "bold"),
             bg="#f1f5f9",
@@ -218,27 +191,59 @@ class FloatingDock:
         btn_show_main.pack(fill=tk.X, pady=(3, 0))
 
     def _bind_events(self):
-        """递归绑定鼠标滑过与离开事件"""
-        self._bind_hover_recursive(self.root)
+        """为收起的小图标与展开的卡片分别绑定鼠标事件"""
+        # 图标视图：鼠标放上去就立即展开
+        self.icon_badge_frame.bind("<Enter>", self._on_icon_enter, add="+")
+        self.lbl_cute_icon.bind("<Enter>", self._on_icon_enter, add="+")
 
-    def _bind_hover_recursive(self, widget):
-        widget.bind("<Enter>", self._on_mouse_enter, add="+")
-        widget.bind("<Leave>", self._on_mouse_leave, add="+")
+        # 卡片视图：鼠标滑入取消收起定时器，鼠标移出触发延迟收起
+        self._bind_card_hover(self.card_frame)
+
+    def _bind_card_hover(self, widget):
+        widget.bind("<Enter>", self._on_card_enter, add="+")
+        widget.bind("<Leave>", self._on_card_leave, add="+")
         for child in widget.winfo_children():
-            self._bind_hover_recursive(child)
+            self._bind_card_hover(child)
 
-    def _on_mouse_enter(self, event=None):
-        """鼠标滑入：立即瞬间平滑滑出展开"""
+    def _apply_collapsed_state(self):
+        """切换到贴边小图标形态 (38x38)"""
+        self.is_expanded = False
+        self.card_frame.pack_forget()
+        self.icon_badge_frame.pack(fill=tk.BOTH, expand=True)
+
+        x = self.screen_width - self.ICON_SIZE
+        y = self.collapsed_y
+        self.root.geometry(f"{self.ICON_SIZE}x{self.ICON_SIZE}+{x}+{y}")
+        self._set_macos_system_topmost()
+
+    def _apply_expanded_state(self):
+        """切换到展开卡片形态 (195x285)"""
+        self.is_expanded = True
+        self.icon_badge_frame.pack_forget()
+        self.card_frame.pack(fill=tk.BOTH, expand=True)
+
+        x = self.screen_width - self.EXPANDED_WIDTH
+        y = self.expanded_y
+        self.root.geometry(f"{self.EXPANDED_WIDTH}x{self.EXPANDED_HEIGHT}+{x}+{y}")
+        self._set_macos_system_topmost()
+
+    def _on_icon_enter(self, event=None):
+        """鼠标放上小猫咪图标：瞬间自动展开！"""
         if self._collapse_timer:
             self.root.after_cancel(self._collapse_timer)
             self._collapse_timer = None
 
-        self._set_macos_system_topmost()
-        if not self.is_expanded and not self._animating:
-            self._animate_slide(target_x=self.x_expanded, on_done=lambda: setattr(self, 'is_expanded', True))
+        if not self.is_expanded:
+            self._apply_expanded_state()
 
-    def _on_mouse_leave(self, event=None):
-        """鼠标滑出：若未钉住则在 350ms 后收起"""
+    def _on_card_enter(self, event=None):
+        """鼠标在卡片内部移动：取消收起定时器"""
+        if self._collapse_timer:
+            self.root.after_cancel(self._collapse_timer)
+            self._collapse_timer = None
+
+    def _on_card_leave(self, event=None):
+        """鼠标移出卡片：若未钉住则在 350ms 后自动收起为小图标"""
         if self.is_pinned:
             return
 
@@ -248,7 +253,7 @@ class FloatingDock:
         self._collapse_timer = self.root.after(350, self._check_and_collapse)
 
     def _check_and_collapse(self):
-        """核查鼠标坐标，若已离开窗口则平滑缩回边缘"""
+        """核查鼠标真实绝对坐标，若已离开卡片则收缩回 38x38 小图标"""
         self._collapse_timer = None
         if self.is_pinned:
             return
@@ -261,36 +266,12 @@ class FloatingDock:
         ww = self.root.winfo_width()
         wh = self.root.winfo_height()
 
+        # 如果鼠标仍在当前窗口内，不收起
         if wx <= mx <= wx + ww and wy <= my <= wy + wh:
             return
 
-        if self.is_expanded and not self._animating:
-            self._animate_slide(target_x=self.x_collapsed, on_done=lambda: setattr(self, 'is_expanded', False))
-
-    def _animate_slide(self, target_x: int, on_done: Optional[Callable] = None):
-        """轻快位移动画"""
-        self._animating = True
-        start_x = self.current_x
-        diff = target_x - start_x
-        step = diff / self.ANIM_STEPS
-        current_step = 0
-
-        def _step_fn():
-            nonlocal current_step, start_x
-            current_step += 1
-            if current_step < self.ANIM_STEPS:
-                new_x = int(start_x + step * current_step)
-                self.current_x = new_x
-                self.root.geometry(f"{self.EXPANDED_WIDTH}x{self.EXPANDED_HEIGHT}+{new_x}+{self.pos_y}")
-                self.root.after(self.ANIM_INTERVAL_MS, _step_fn)
-            else:
-                self.current_x = target_x
-                self.root.geometry(f"{self.EXPANDED_WIDTH}x{self.EXPANDED_HEIGHT}+{target_x}+{self.pos_y}")
-                self._animating = False
-                if on_done:
-                    on_done()
-
-        _step_fn()
+        if self.is_expanded:
+            self._apply_collapsed_state()
 
     def _toggle_pin(self):
         """切换钉住锁定"""
@@ -298,16 +279,47 @@ class FloatingDock:
         if self.is_pinned:
             self.btn_pin.configure(bg="#6366f1", fg="#ffffff", text="📌")
             if not self.is_expanded:
-                self._animate_slide(target_x=self.x_expanded, on_done=lambda: setattr(self, 'is_expanded', True))
+                self._apply_expanded_state()
         else:
             self.btn_pin.configure(bg="#f1f5f9", fg=self.text_secondary, text="📌")
-            self._on_mouse_leave()
+            self._on_card_leave()
 
     def collapse_immediate(self):
-        """立即收起回边缘"""
+        """立即收起回小图标"""
         self.is_pinned = False
         self.btn_pin.configure(bg="#f1f5f9", fg=self.text_secondary, text="📌")
-        self._animate_slide(target_x=self.x_collapsed, on_done=lambda: setattr(self, 'is_expanded', False))
+        self._apply_collapsed_state()
+
+    def _set_macos_system_topmost(self):
+        """利用 macOS AppKit 原生接口将悬浮窗提升为全局系统级悬浮 (跨所有第三方应用与全屏桌面均保持可见)"""
+        if sys.platform != "darwin":
+            return
+        try:
+            import AppKit
+            self.root.update_idletasks()
+
+            for win in AppKit.NSApp.windows():
+                # 排除主控制台窗口（主窗口高度较大 > 500）
+                frame = win.frame()
+                if frame.size.height < 450:
+                    win.setLevel_(AppKit.NSStatusWindowLevel)
+                    win.setCollectionBehavior_(
+                        AppKit.NSWindowCollectionBehaviorCanJoinAllSpaces |
+                        AppKit.NSWindowCollectionBehaviorFullScreenAuxiliary |
+                        AppKit.NSWindowCollectionBehaviorStationary
+                    )
+                    win.setHidesOnDeactivate_(False)
+        except Exception:
+            pass
+
+    def _maintain_macos_topmost(self):
+        """定期维护系统置顶状态，防止偶发降级"""
+        try:
+            self._set_macos_system_topmost()
+            self.root.lift()
+        except Exception:
+            pass
+        self.root.after(3000, self._maintain_macos_topmost)
 
     def _check_browser_status_async(self):
         """后台检测浏览器连接状态"""
