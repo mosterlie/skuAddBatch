@@ -10,10 +10,10 @@ import subprocess
 from typing import Optional, Callable
 from playwright.sync_api import Page
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import config
 from core.scraper_1688 import Scraper1688
 
-PLUGIN_DIR = "/Users/gx/Desktop/mypro/1688-Image-Downloader"
+PLUGIN_DIR = config.PLUGIN_DIR
 
 
 def inject_plugin_ui_into_1688_page(page: Page, default_output_dir: str = "", log_fn: Optional[Callable[[str, str], None]] = None) -> bool:

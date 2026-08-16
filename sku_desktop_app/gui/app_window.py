@@ -102,28 +102,87 @@ class SkuAppGUI:
         sub_label = ttk.Label(header_frame, text="商品采集 • 数据整理 • 批量录入一站式助手", font=("Helvetica", 9), foreground=self.text_secondary)
         sub_label.pack(side=tk.LEFT, padx=(10, 0), pady=(4, 0))
 
-        # 2. 顶级主菜单 Notebook
-        self.notebook = ttk.Notebook(main_container, style="Main.TNotebook")
-        self.notebook.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
-        self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
+        # 2. 顶级主菜单现代分段导航栏 (Segmented Tab Bar)
+        nav_container = tk.Frame(main_container, bg="#e2e8f0", padx=3, pady=3)
+        nav_container.pack(fill=tk.X, pady=(0, 10))
 
-        # 菜单 1: 📦 商品采集
-        self.tab_collect = ttk.Frame(self.notebook, padding="10 10 10 10")
-        self.notebook.add(self.tab_collect, text="  📦 商品采集  ")
+        self.tab_buttons = []
+        tab_defs = [
+            ("📦 1. 商品采集 (1688素材)", 0),
+            ("📊 2. 数据整理 (SKU核算)", 1),
+            ("🚀 3. 妙手批量录入", 2)
+        ]
+
+        self.content_container = ttk.Frame(main_container, style="TFrame")
+        self.content_container.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
+
+        self.tab_frames = []
+        self.tab_collect = ttk.Frame(self.content_container, style="TFrame")
         self._build_collect_tab(self.tab_collect)
+        self.tab_frames.append(self.tab_collect)
 
-        # 菜单 2: 📑 数据整理 (暂时留空)
-        self.tab_process = ttk.Frame(self.notebook, padding="10 10 10 10")
-        self.notebook.add(self.tab_process, text="  📑 数据整理  ")
+        self.tab_process = ttk.Frame(self.content_container, style="TFrame")
         self._build_process_tab(self.tab_process)
+        self.tab_frames.append(self.tab_process)
 
-        # 菜单 3: 🚀 商品录入 (妙手批量上传原有页面)
-        self.tab_entry = ttk.Frame(self.notebook, padding="10 10 10 10")
-        self.notebook.add(self.tab_entry, text="  🚀 商品录入  ")
+        self.tab_entry = ttk.Frame(self.content_container, style="TFrame")
         self._build_entry_tab(self.tab_entry)
+        self.tab_frames.append(self.tab_entry)
+
+        self.active_tab_idx = 0
+        for title, idx in tab_defs:
+            btn = tk.Button(
+                nav_container,
+                text=title,
+                font=("Helvetica", 10, "bold" if idx == 0 else "normal"),
+                bg="#ffffff" if idx == 0 else "#e2e8f0",
+                fg="#2563eb" if idx == 0 else "#64748b",
+                activebackground="#ffffff",
+                activeforeground="#2563eb",
+                highlightbackground="#e2e8f0",
+                relief="flat",
+                bd=0,
+                cursor="hand2",
+                padx=14,
+                pady=6,
+                command=lambda i=idx: self._switch_tab(i)
+            )
+            btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+            self.tab_buttons.append(btn)
+
+        # 默认展示第 1 个 tab
+        self._switch_tab(0)
 
         # 3. 底部常驻日志监控窗口
         self._create_log_console(main_container)
+
+    def _switch_tab(self, idx: int):
+        """切换主菜单页签"""
+        self.active_tab_idx = idx
+        for i, frame in enumerate(self.tab_frames):
+            if i == idx:
+                frame.pack(fill=tk.BOTH, expand=True)
+            else:
+                frame.pack_forget()
+
+        for i, btn in enumerate(self.tab_buttons):
+            if i == idx:
+                btn.configure(
+                    bg="#ffffff",
+                    fg="#2563eb",
+                    font=("Helvetica", 10, "bold"),
+                    highlightbackground="#cbd5e1"
+                )
+            else:
+                btn.configure(
+                    bg="#e2e8f0",
+                    fg="#64748b",
+                    font=("Helvetica", 10),
+                    highlightbackground="#e2e8f0"
+                )
+
+        if idx == 0:
+            self._async_probe_1688_info()
 
     def _build_collect_tab(self, parent):
         """构建【商品采集】菜单页面"""
@@ -337,6 +396,8 @@ class SkuAppGUI:
                              highlightbackground="#f97316", relief="flat", cursor="hand2", padx=10, pady=2,
                              command=self._on_open_1688)
         btn_1688.pack(side=tk.RIGHT, padx=(0, 6))
+
+
 
         btn_launch = tk.Button(top_row, text="🚀 打开妙手", font=("Helvetica", 9, "bold"),
                                bg="#3b82f6", fg="#1e293b", activebackground="#2563eb", activeforeground="#1e293b",
@@ -577,33 +638,63 @@ class SkuAppGUI:
         self.append_log("✅ 妙手账号密码已成功保存到本地安全配置", "success")
 
     def _on_launch_browser(self):
-        """启动/唤起浏览器（直达妙手）并在检测到登录页时自动识别验证码秒登"""
+        """启动/唤起浏览器（直达妙手）并在最右侧新开标签页，自动填入登录信息并秒登"""
         self.append_log(f"正在打开妙手工作台 ({config.MIAOSHOU_HOME_URL})...", "info")
 
         def _worker():
             if not self.browser_mgr.is_cdp_ready():
                 ok, msg = self.browser_mgr.launch_managed_chrome(initial_url=config.MIAOSHOU_HOME_URL)
-                if ok:
-                    self.append_log(f"✅ {msg}", "success")
-                else:
+                if not ok:
                     self.append_log(f"❌ {msg}", "error")
                     return
-            else:
+                self.append_log(f"✅ {msg}", "success")
+                time.sleep(1.0)
+                # 恢复历史会话后，在最右侧新开妙手页签
                 self.browser_mgr.open_new_tab(config.MIAOSHOU_HOME_URL)
-                self.append_log("✨ 已在浏览器最右侧新开妙手标签页！", "success")
+            else:
+                # 浏览器已在运行：记录已有标签页数量，在最右侧新开
+                existing_count = self.browser_mgr.get_open_tab_count()
+                self.append_log(f"📑 当前浏览器已有 {existing_count} 个标签页，将在最右侧新开页签...", "info")
+                self.browser_mgr.open_new_tab(config.MIAOSHOU_HOME_URL)
 
+            # 确保最右侧标签页被激活并展示在前台
+            time.sleep(0.3)
+            self.browser_mgr.bring_browser_to_front(select_last_tab=True)
             self.root.after(400, self._async_refresh_browser_status)
 
-            # 智能检测：如果处于登录页且有验证码，自动启动 AI OCR 秒级过码登录
-            time.sleep(1.5)
-            target_p = self._get_target_page()
-            if target_p:
-                helper = MiaoshouLoginHelper(target_p, log_fn=self.append_log)
-                if self.browser_mgr.run_on_browser_thread(helper.is_login_page):
-                    acc = self.acc_var.get().strip()
-                    pwd = self.pwd_var.get().strip()
-                    self.browser_mgr.run_on_browser_thread(helper.auto_solve_captcha_and_login, acc, pwd)
-                    time.sleep(1.0)
+            # ★ 关键：重新获取当前浏览器真正展示在最前台的活动页面
+            # AppleScript 创建标签页后返回的 Playwright Page 对象可能不精确，
+            # 必须在确认最右侧标签页激活后，通过 get_active_page 拿到真实页面
+            time.sleep(0.8)
+            active_p = self.browser_mgr.get_active_page()
+            if not active_p:
+                # 兜底：取 context 中最后一个页面（即最右侧）
+                try:
+                    ok, _ = self.browser_mgr.connect(activate=False, auto_create_tab=False)
+                    if ok and self.browser_mgr.context and self.browser_mgr.context.pages:
+                        active_p = self.browser_mgr.context.pages[-1]
+                except Exception:
+                    pass
+
+            if active_p:
+                self.append_log("✨ 已在浏览器最右侧新开妙手标签页并置顶！", "success")
+
+                # 在最右侧新页面上执行自动登录检测与填入
+                def _do_auto_login_on_thread():
+                    try:
+                        active_p.wait_for_load_state("domcontentloaded", timeout=6000)
+                    except Exception:
+                        pass
+                    time.sleep(0.8)
+                    helper = MiaoshouLoginHelper(active_p, log_fn=self.append_log)
+                    if helper.is_login_page():
+                        acc = self.acc_var.get().strip()
+                        pwd = self.pwd_var.get().strip()
+                        helper.auto_solve_captcha_and_login(acc, pwd)
+
+                time.sleep(0.5)
+                self.browser_mgr.run_on_browser_thread(_do_auto_login_on_thread)
+                self.root.after(500, self._async_refresh_browser_status)
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -695,16 +786,6 @@ class SkuAppGUI:
                 self.append_log("⚠️ 未检测到 1688 登录态，若未登录请在浏览器中扫码登录一次（登录后会自动持久化）。", "warn")
 
         threading.Thread(target=_worker, daemon=True).start()
-
-    def _on_tab_changed(self, event=None):
-        """当用户切换主菜单页签时触发对应自适应逻辑"""
-        try:
-            selected_tab = self.notebook.select()
-            if selected_tab == str(self.tab_collect):
-                # 切换到【商品采集】菜单：自动探测当前 1688 页面并快速回填
-                self._async_probe_1688_info()
-        except Exception:
-            pass
 
     def _async_probe_1688_info(self):
         """在后台轻量探测当前打开的 1688 商品详情页标题与链接，毫秒级回填"""
@@ -913,15 +994,23 @@ class SkuAppGUI:
             self.tab_combo.current(0)
 
     def _get_target_page(self):
-        """获取当前用户在下拉框选中的 Page 对象"""
-        if not self.available_tabs:
-            # 尝试自动查找
-            return self.browser_mgr.find_best_target_page()
+        """
+        获取当前待操作的 Page 对象：
+        时刻以浏览器当前真正处于前台展示/激活的页签为准；
+        如果未获取到或不在前台，则以用户下拉框选择或匹配到的活动页为准。
+        """
+        # 1. 优先获取当前浏览器最前台、正在展示的活动标签页
+        active_page = self.browser_mgr.get_active_page()
+        if active_page:
+            return active_page
 
-        curr_idx = self.tab_combo.current()
-        if 0 <= curr_idx < len(self.available_tabs):
-            return self.available_tabs[curr_idx].page
+        # 2. 其次获取下拉框当前选中的标签页
+        if self.available_tabs:
+            curr_idx = self.tab_combo.current()
+            if 0 <= curr_idx < len(self.available_tabs):
+                return self.available_tabs[curr_idx].page
 
+        # 3. 兜底获取
         return self.browser_mgr.find_best_target_page()
 
     def _set_ui_running(self, running: bool):
@@ -956,7 +1045,15 @@ class SkuAppGUI:
 
         def _worker():
             try:
-                self.browser_mgr.run_on_browser_thread(executor.run_all)
+                def _run():
+                    try:
+                        t_str = target_page.title()
+                        u_str = target_page.url
+                        self.append_log(f"🎯 目标锁定当前展示页面: {t_str} ({u_str[:45]}...)", "info")
+                    except Exception:
+                        pass
+                    executor.run_all()
+                self.browser_mgr.run_on_browser_thread(_run)
             except Exception as e:
                 self.append_log(f"自动化执行异常: {str(e)}", "error")
             finally:
@@ -988,21 +1085,27 @@ class SkuAppGUI:
 
         def _worker():
             try:
-                if step_name == "clean":
-                    self.browser_mgr.run_on_browser_thread(executor.clean_existing_data)
-                elif step_name == "variants":
-                    def _step_variants():
+                def _do_step():
+                    try:
+                        t_str = target_page.title()
+                        u_str = target_page.url
+                        self.append_log(f"🎯 目标锁定当前展示页面: {t_str} ({u_str[:45]}...)", "info")
+                    except Exception:
+                        pass
+                    if step_name == "clean":
+                        executor.clean_existing_data()
+                    elif step_name == "variants":
                         executor.clean_existing_data()
                         executor.setup_variants()
-                    self.browser_mgr.run_on_browser_thread(_step_variants)
-                elif step_name == "prod_img":
-                    self.browser_mgr.run_on_browser_thread(executor.upload_product_images)
-                elif step_name == "sku_img":
-                    self.browser_mgr.run_on_browser_thread(executor.upload_sku_images)
-                elif step_name == "test_upload":
-                    self.browser_mgr.run_on_browser_thread(executor.test_upload_first_sku_images)
-                elif step_name == "table":
-                    self.browser_mgr.run_on_browser_thread(executor.fill_virtual_table)
+                    elif step_name == "prod_img":
+                        executor.upload_product_images()
+                    elif step_name == "sku_img":
+                        executor.upload_sku_images()
+                    elif step_name == "test_upload":
+                        executor.test_upload_first_sku_images()
+                    elif step_name == "table":
+                        executor.fill_virtual_table()
+                self.browser_mgr.run_on_browser_thread(_do_step)
             except Exception as e:
                 self.append_log(f"单步执行异常: {str(e)}", "error")
             finally:
@@ -1112,9 +1215,29 @@ def auto_nav_quick_listing_amazon(page, log_fn):
 def start_app():
     """启动桌面应用入口"""
     root = tk.Tk()
+
+    # 针对 macOS Dock 栏图标点击唤醒与最小化还原的系统级修复
+    if sys.platform == "darwin":
+        def _on_mac_reopen(*args):
+            try:
+                # 若窗口处于最小化 (iconic) 或隐藏 (withdrawn) 状态，还原为正常状态
+                if root.state() in ("iconic", "withdrawn"):
+                    root.deiconify()
+                    root.state("normal")
+                root.lift()
+                root.focus_force()
+            except Exception:
+                pass
+
+        try:
+            root.createcommand("::tk::mac::ReopenApplication", _on_mac_reopen)
+        except Exception:
+            pass
+
     app = SkuAppGUI(root)
     root.mainloop()
 
 
 if __name__ == "__main__":
     start_app()
+

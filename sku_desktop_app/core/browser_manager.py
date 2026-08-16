@@ -143,15 +143,36 @@ class BrowserManager:
             return False
         return False
 
-    def bring_browser_to_front(self):
-        """将 Chrome 浏览器窗口激活并置于前台"""
+    def bring_browser_to_front(self, select_last_tab: bool = False):
+        """将 Chrome 浏览器窗口激活并置于前台；若 select_last_tab=True 则强制切换至最右侧新开页签"""
         if sys.platform == "darwin":
-            os.system('''osascript -e 'tell application "Google Chrome" to activate' 2>/dev/null''')
+            for app_name in ("Google Chrome", "Microsoft Edge"):
+                if select_last_tab:
+                    # 先激活浏览器窗口，再精确切换最前窗口的最后一个标签页
+                    script = f'''
+                    tell application "{app_name}"
+                        activate
+                        delay 0.15
+                        if (count of windows) > 0 then
+                            set frontWin to front window
+                            set tabCount to (count of tabs of frontWin)
+                            if tabCount > 0 then
+                                set active tab index of frontWin to tabCount
+                            end if
+                        end if
+                    end tell
+                    '''
+                else:
+                    script = f'tell application "{app_name}" to activate'
+                try:
+                    subprocess.run(["osascript", "-e", script], capture_output=True, timeout=3)
+                except Exception:
+                    pass
 
     def _get_front_window_active_url(self) -> Optional[str]:
         """
-        macOS 精确方案：通过 AppleScript 读取浏览器最前窗口中『真正正在显示』页签的 URL。
-        规避 visibilityState 在会话恢复页签/多窗口场景下误报 visible 的问题。
+        macOS 精确方案：通过 AppleScript 读取浏览器当前最前台窗口中『真正正在显示』页签的 URL。
+        规避 visibilityState 在后台标签页、多窗口或历史会话恢复页签下误报 visible 的问题。
         """
         if sys.platform != "darwin":
             return None
@@ -159,10 +180,18 @@ class BrowserManager:
             try:
                 script = f'''
                 tell application "{app_name}"
+                    try
+                        if (count of windows) > 0 then
+                            set u to URL of active tab of front window
+                            if u is not missing value and u does not contain "127.0.0.1" and u does not contain "localhost" then
+                                return u
+                            end if
+                        end if
+                    end try
                     repeat with w in windows
                         try
                             set u to URL of active tab of w
-                            if u does not contain "127.0.0.1" and u does not contain "localhost" then
+                            if u is not missing value and u does not contain "127.0.0.1" and u does not contain "localhost" then
                                 return u
                             end if
                         end try
@@ -247,7 +276,7 @@ class BrowserManager:
                 self.bring_browser_to_front()
                 return True, "检测到后台浏览器无活动窗口，已自动唤起新窗口！"
             else:
-                self.open_or_focus_url(initial_url)
+                self.open_new_tab(initial_url)
                 self.bring_browser_to_front()
                 return True, f"浏览器已处于调试模式运行中 (当前 {tab_cnt} 个窗口)"
 
@@ -268,10 +297,9 @@ class BrowserManager:
             "--no-first-run",
             "--no-default-browser-check",
             "--disable-infobars",
-            initial_url
         ]
 
-        ext_path = "/Users/gx/Desktop/mypro/1688-Image-Downloader"
+        ext_path = config.PLUGIN_DIR
         if os.path.exists(ext_path):
             args.insert(1, f"--load-extension={ext_path}")
             args.insert(2, f"--disable-extensions-except={ext_path}")
@@ -317,9 +345,12 @@ class BrowserManager:
 
             self.context = self.browser.contexts[0]
             
-            # 自动绑定弹窗处理器，避免浏览器 alert/confirm/beforeunload 引发未捕获协议异常
+            # 自动绑定弹窗处理器，避免重复绑定与未捕获协议异常
             def _bind_dialog_handler(page: Page):
                 try:
+                    if getattr(page, "_has_dialog_bound", False):
+                        return
+                    page._has_dialog_bound = True
                     page.on("dialog", lambda dialog: self._safe_handle_dialog(dialog))
                 except Exception:
                     pass
@@ -340,7 +371,55 @@ class BrowserManager:
         try:
             dialog.accept()
         except Exception:
+            try:
+                dialog.dismiss()
+            except Exception:
+                pass
             pass
+
+    def _probe_front_active_page_impl(self) -> Optional[Page]:
+        """
+        macOS 独家高精度探针：通过 AppleScript 瞬时标记当前 Chrome 前台活动页签的 hash，
+        利用零刷新、无损的 URL Hash 探测，100% 精确锁定 Playwright 中对应的活动 Page 对象。
+        彻底消除多个同 URL、同标题页签下的误匹配。
+        """
+        if sys.platform != "darwin" or not self.context or not self.context.pages:
+            return None
+
+        probe_token = f"ag_act_{int(time.time() * 1000)}"
+        for app_name in ("Google Chrome", "Microsoft Edge"):
+            try:
+                script = f'''
+                tell application "{app_name}"
+                    if (count of windows) > 0 then
+                        tell front window
+                            set u to URL of active tab
+                            if u is not missing value and u does not start with "chrome:" and u does not start with "edge:" and u does not contain "127.0.0.1" then
+                                set AppleScript's text item delimiters to "#"
+                                set baseU to text item 1 of u
+                                set URL of active tab to (baseU & "#{probe_token}")
+                                return "OK"
+                            end if
+                        end tell
+                    end if
+                end tell
+                '''
+                out = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=2).stdout.strip()
+                if out == "OK":
+                    time.sleep(0.12)
+                    for p in self.context.pages:
+                        try:
+                            h = p.evaluate("() => window.location.hash")
+                            if probe_token in (h or "") or probe_token in (p.url or ""):
+                                # 立即无损恢复干净 URL
+                                p.evaluate("() => history.replaceState(null, '', window.location.pathname + window.location.search)")
+                                return p
+                        except Exception:
+                            pass
+                    break
+            except Exception:
+                continue
+        return None
 
     def get_all_tabs(self) -> List[TabInfo]:
         """获取当前浏览器中所有已打开的标签页"""
@@ -352,11 +431,11 @@ class BrowserManager:
             if not ok or not self.context:
                 return []
 
-        # 主方案：macOS 用 AppleScript 获取最前窗口真实显示的页签 URL
-        front_active_url = self._get_front_window_active_url()
+        # 1. 优先通过高精度探针锁定当前真正激活的 Page 对象
+        active_page = self._probe_front_active_page_impl()
 
         tabs = []
-        js_states = []  # 与 tabs 平行的 (visible_state, has_focus) 记录，用于兜底判定
+        js_states = []
         for idx, p in enumerate(self.context.pages):
             try:
                 title = p.title()
@@ -376,13 +455,14 @@ class BrowserManager:
                 is_1688 = (any(kw in url.lower() for kw in config.KEYWORDS_1688) or ("1688" in title and "127.0.0.1" not in url)) and "127.0.0.1" not in url and "localhost" not in url
                 is_target = is_url_match and (is_title_match or has_dom_match) or has_dom_match
 
-                # 记录 JS 侧可见性状态（兜底用，不直接作为结论）
                 visible_state, has_focus = "", False
                 try:
                     visible_state = p.evaluate("() => document.visibilityState") or ""
                     has_focus = bool(p.evaluate("() => document.hasFocus()"))
                 except Exception:
                     pass
+
+                is_current_active = (p == active_page) if active_page else False
 
                 tabs.append(TabInfo(
                     index=idx,
@@ -391,22 +471,14 @@ class BrowserManager:
                     is_miaoshou=is_target,
                     is_1688=is_1688,
                     page=p,
-                    is_active=False
+                    is_active=is_current_active
                 ))
                 js_states.append((visible_state, has_focus))
             except Exception:
                 continue
 
-        # 判定激活页签：AppleScript URL 精确匹配 -> JS 聚焦态 -> 唯一可见页
-        active_idx = -1
-        if front_active_url:
-            norm_target = self._normalize_url(front_active_url)
-            for i, t in enumerate(tabs):
-                if self._normalize_url(t.url) == norm_target:
-                    active_idx = i
-                    break
-        if active_idx < 0 and js_states:
-            # 过滤掉本地插件弹窗（127.0.0.1 或 localhost），不让它抢占 active_idx
+        # 2. 如果高精度探针未生效（如非 macOS 平台），则通过 JS 聚焦态与唯一可见态兜底
+        if not any(t.is_active for t in tabs) and js_states:
             valid_indices = [
                 i for i, t in enumerate(tabs) 
                 if "127.0.0.1" not in (t.url or "") and "localhost" not in (t.url or "")
@@ -415,17 +487,14 @@ class BrowserManager:
             visible = [i for i in valid_indices if js_states[i][0] == "visible"]
             
             if focused:
-                active_idx = focused[0]
+                tabs[focused[0]].is_active = True
             elif len(visible) == 1:
-                active_idx = visible[0]
-
-        if 0 <= active_idx < len(tabs):
-            tabs[active_idx].is_active = True
+                tabs[visible[0]].is_active = True
 
         return tabs
 
     def open_new_tab(self, target_url: str) -> Optional[Page]:
-        """在 Chrome 中强制开启新标签页，总是在最右侧打开"""
+        """在 Chrome 中强制开启新标签页，总是在最右侧打开（已有多标签页时亦可靠）"""
         return self.run_on_browser_thread(self._open_new_tab_impl, target_url)
 
     def _open_new_tab_impl(self, target_url: str) -> Optional[Page]:
@@ -433,15 +502,134 @@ class BrowserManager:
             ok, _ = self._connect_impl()
             if not ok or not self.context:
                 return None
-        self.create_tab_via_cdp_http(target_url)
-        # 浏览器通过 /json/new 创建标签页后会自动聚焦，不需要手动调用 bring_to_front()
-        # 否则如果 Playwright 的 context.pages 同步有延迟，pages[-1] 可能是旧页面，导致跳回旧页面
-        time.sleep(0.5)
-        self.bring_browser_to_front()
-        
-        if self.context.pages:
-            return self.context.pages[-1]
-        return None
+
+        # 记录打开前已有的页面 id 集合，后续用于精确识别新增页面
+        existing_page_ids = set()
+        for p in self.context.pages:
+            try:
+                existing_page_ids.add(id(p))
+            except Exception:
+                pass
+
+        new_p = None
+
+        # ═══════════════════════════════════════════════════════════
+        # 方案 A（macOS 首选）：通过 AppleScript make new tab 创建
+        # Chrome 原生 make new tab 始终追加到标签栏最右端，
+        # 这是多标签场景下唯一可靠保证「最右侧新开」的方式。
+        # CDP /json/new 和 context.new_page() 都会在当前激活标签旁边插入。
+        # ═══════════════════════════════════════════════════════════
+        if sys.platform == "darwin":
+            created_via_applescript = False
+            for app_name in ("Google Chrome", "Microsoft Edge"):
+                try:
+                    script = f'''
+                    tell application "{app_name}"
+                        if (count of windows) > 0 then
+                            tell front window
+                                set newTab to make new tab with properties {{URL:"{target_url}"}}
+                                set active tab index to (count of tabs)
+                            end tell
+                            return "OK"
+                        else
+                            return "NO_WINDOW"
+                        end if
+                    end tell
+                    '''
+                    result = subprocess.run(
+                        ["osascript", "-e", script],
+                        capture_output=True, text=True, timeout=4
+                    )
+                    output = (result.stdout or "").strip()
+                    if output == "OK":
+                        created_via_applescript = True
+                        break
+                except Exception:
+                    continue
+
+            if created_via_applescript:
+                # 等待 Playwright context 感知到 Chrome 新打开的标签页
+                for _ in range(12):
+                    time.sleep(0.3)
+                    for p in reversed(self.context.pages):
+                        if id(p) not in existing_page_ids:
+                            new_p = p
+                            break
+                    if new_p:
+                        break
+
+                # 如果 Playwright 未自动感知，尝试重新连接 context
+                if not new_p:
+                    try:
+                        self.browser = self.playwright.chromium.connect_over_cdp(self.cdp_url)
+                        if self.browser.contexts:
+                            self.context = self.browser.contexts[0]
+                            for p in reversed(self.context.pages):
+                                if id(p) not in existing_page_ids:
+                                    new_p = p
+                                    break
+                            if not new_p and self.context.pages:
+                                new_p = self.context.pages[-1]
+                    except Exception:
+                        pass
+
+        # ═══════════════════════════════════════════════════════════
+        # 方案 B（非 macOS 或 AppleScript 失败时兜底）：
+        # 通过 CDP HTTP /json/new 创建，再用 AppleScript 切到最右
+        # ═══════════════════════════════════════════════════════════
+        if not new_p:
+            try:
+                req = urllib.request.Request(
+                    f"{self.cdp_url}/json/new?{target_url}",
+                    method="PUT",
+                    headers={"User-Agent": "Mozilla/5.0"}
+                )
+                opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+                with opener.open(req, timeout=3.0) as resp:
+                    if resp.status == 200:
+                        time.sleep(0.6)
+                        for p in reversed(self.context.pages):
+                            if id(p) not in existing_page_ids:
+                                new_p = p
+                                break
+                        if not new_p and self.context.pages:
+                            new_p = self.context.pages[-1]
+            except Exception:
+                pass
+
+        # ═══════════════════════════════════════════════════════════
+        # 方案 C（最终兜底）：Playwright context.new_page()
+        # ═══════════════════════════════════════════════════════════
+        if not new_p:
+            try:
+                new_p = self.context.new_page()
+                try:
+                    new_p.on("dialog", lambda dialog: self._safe_handle_dialog(dialog))
+                except Exception:
+                    pass
+                try:
+                    new_p.goto(target_url, wait_until="commit", timeout=15000)
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+        if not new_p:
+            return None
+
+        # 绑定弹窗处理
+        try:
+            new_p.on("dialog", lambda dialog: self._safe_handle_dialog(dialog))
+        except Exception:
+            pass
+
+        # 确保新标签页置顶并激活到最右侧
+        try:
+            new_p.bring_to_front()
+        except Exception:
+            pass
+        self.bring_browser_to_front(select_last_tab=True)
+        return new_p
 
     def open_or_focus_url(self, target_url: str) -> Optional[Page]:
         """在 Chrome 中打开目标网址或激活已有标签页"""
@@ -524,6 +712,11 @@ class BrowserManager:
         return self.run_on_browser_thread(self._get_active_page_impl)
 
     def _get_active_page_impl(self) -> Optional[Page]:
+        # 1. 优先直接高精度探测当前前台活动页（0刷新、0损耗）
+        active_p = self._probe_front_active_page_impl()
+        if active_p:
+            return active_p
+        # 2. 兜底遍历 tabs
         tabs = self._get_all_tabs_impl()
         for t in tabs:
             if t.is_active:

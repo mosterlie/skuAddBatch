@@ -20,7 +20,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 from core.scraper_1688 import Scraper1688
 
-PLUGIN_DIR = "/Users/gx/Desktop/mypro/1688-Image-Downloader"
+PLUGIN_DIR = config.PLUGIN_DIR
 SERVER_PORT = 31416
 
 
@@ -58,9 +58,7 @@ class PluginServerHandler(BaseHTTPRequestHandler):
             rel_path = path[len("calcfee"):].lstrip("/")
             if not rel_path or rel_path == "index.html":
                 rel_path = "index.html"
-            calcfee_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web", "calcfee")
-            if not os.path.exists(calcfee_dir):
-                calcfee_dir = "/Users/gx/Desktop/mypro/calcfee/calcfee_ui/dist"
+            calcfee_dir = config.CALCFEE_DIR
             target_file = os.path.join(calcfee_dir, rel_path)
             if not os.path.exists(target_file):
                 target_file = os.path.join(calcfee_dir, "index.html")

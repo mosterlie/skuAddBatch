@@ -19,8 +19,8 @@ _CACHED_CONTENT_JS = None
 def _get_scraper_scripts():
     global _CACHED_COLLECTOR_JS, _CACHED_CONTENT_JS
     if _CACHED_COLLECTOR_JS is None or _CACHED_CONTENT_JS is None:
-        collector_js_path = "/Users/gx/Desktop/mypro/1688-Image-Downloader/1688_sku_collector.js"
-        content_js_path = "/Users/gx/Desktop/mypro/1688-Image-Downloader/content.js"
+        collector_js_path = os.path.join(config.PLUGIN_DIR, "1688_sku_collector.js")
+        content_js_path = os.path.join(config.PLUGIN_DIR, "content.js")
         if os.path.exists(collector_js_path):
             with open(collector_js_path, 'r', encoding='utf-8') as f:
                 _CACHED_COLLECTOR_JS = f.read()

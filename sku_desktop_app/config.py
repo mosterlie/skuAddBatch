@@ -12,6 +12,16 @@ os.environ["no_proxy"] = "127.0.0.1,localhost,::1"
 DEFAULT_CDP_PORT = 9222
 CDP_URL = f"http://127.0.0.1:{DEFAULT_CDP_PORT}"
 
+# 获取应用运行根目录（兼容源码运行与 PyInstaller 打包后的 _MEIPASS 运行环境）
+if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+    BASE_DIR = sys._MEIPASS
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+WEB_DIR = os.path.join(BASE_DIR, "web")
+PLUGIN_DIR = os.path.join(WEB_DIR, "1688-Image-Downloader")
+CALCFEE_DIR = os.path.join(WEB_DIR, "calcfee")
+
 # 用户本地持久化浏览器数据目录（保存登录状态、Cookie，不与日常个人浏览器冲突）
 if sys.platform == "darwin":
     # macOS

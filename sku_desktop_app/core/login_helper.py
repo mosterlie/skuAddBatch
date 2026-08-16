@@ -94,34 +94,42 @@ class MiaoshouLoginHelper:
                 # 1. 检查并填入账号
                 acc_inputs = self.page.locator("input[placeholder*='手机号'], input[placeholder*='账号'], input[placeholder*='邮箱'], .login-form__input")
                 if acc_inputs.count() > 0:
-                    curr_acc = acc_inputs.first.input_value()
-                    if not curr_acc and account:
-                        acc_inputs.first.click()
-                        acc_inputs.first.fill(account)
-                        acc_inputs.first.evaluate("""(el, val) => {
-                            el.value = val;
-                            el.dispatchEvent(new Event('input', { bubbles: true }));
-                            el.dispatchEvent(new Event('change', { bubbles: true }));
-                        }""", account)
-                        self.log(f"已自动填入账号: {account[:3]}****{account[-4:] if len(account)>=7 else ''}", "info")
-                    elif not curr_acc and not account:
-                        self.log("⚠️ 页面账号输入框为空，请在软件中配置账号或在浏览器中输入一次", "warn")
+                    if account:
+                        try:
+                            acc_inputs.first.click()
+                            acc_inputs.first.fill(account)
+                            acc_inputs.first.evaluate("""(el, val) => {
+                                el.value = val;
+                                el.dispatchEvent(new Event('input', { bubbles: true }));
+                                el.dispatchEvent(new Event('change', { bubbles: true }));
+                            }""", account)
+                            self.log(f"已自动填入账号: {account[:3]}****{account[-4:] if len(account)>=7 else ''}", "info")
+                        except Exception as e:
+                            self.log(f"填入账号失败: {str(e)}", "warn")
+                    else:
+                        curr_acc = acc_inputs.first.input_value()
+                        if not curr_acc:
+                            self.log("⚠️ 页面账号输入框为空，请在软件中配置账号", "warn")
 
                 # 2. 检查并填入密码
                 pwd_inputs = self.page.locator("input[type='password']")
                 if pwd_inputs.count() > 0:
-                    curr_pwd = pwd_inputs.first.input_value()
-                    if not curr_pwd and password:
-                        pwd_inputs.first.click()
-                        pwd_inputs.first.fill(password)
-                        pwd_inputs.first.evaluate("""(el, val) => {
-                            el.value = val;
-                            el.dispatchEvent(new Event('input', { bubbles: true }));
-                            el.dispatchEvent(new Event('change', { bubbles: true }));
-                        }""", password)
-                        self.log("已自动填入登录密码", "info")
-                    elif not curr_pwd and not password:
-                        self.log("⚠️ 页面密码输入框为空，请在软件中配置密码或在浏览器中输入一次", "warn")
+                    if password:
+                        try:
+                            pwd_inputs.first.click()
+                            pwd_inputs.first.fill(password)
+                            pwd_inputs.first.evaluate("""(el, val) => {
+                                el.value = val;
+                                el.dispatchEvent(new Event('input', { bubbles: true }));
+                                el.dispatchEvent(new Event('change', { bubbles: true }));
+                            }""", password)
+                            self.log("已自动填入登录密码", "info")
+                        except Exception as e:
+                            self.log(f"填入密码失败: {str(e)}", "warn")
+                    else:
+                        curr_pwd = pwd_inputs.first.input_value()
+                        if not curr_pwd:
+                            self.log("⚠️ 页面密码输入框为空，请在软件中配置密码", "warn")
 
                 # 3. 定位验证码图片元素
                 captcha_img = self.page.locator(".captcha-field__img, img.captcha-field__img, img[src*='captcha'], .captcha-field img")
