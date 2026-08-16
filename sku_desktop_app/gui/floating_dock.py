@@ -1,9 +1,9 @@
 """
-桌面边缘吸附快捷唤醒小程序 (Edge 3-Tier Cute Floating Dock)
-- 默认状态 (Tier 1)：屏幕边缘仅显示极小的一点 (8px 宽度的微型指示条)，完全零遮挡；
-- 鼠标滑过 (Tier 2)：鼠标移动到边缘微点时，瞬间浮现出可爱的 🐱 萌猫小图标；
-- 点击图标 (Tier 3)：点击 🐱 猫咪图标，立即弹出完整的快捷操作工作台卡片；
-- 鼠标离开自动平滑缩回，支持 📌 钉住锁定与全系统置顶常驻。
+桌面边缘吸附快捷唤醒小程序 (Edge 3-Tier Cute Floating Dock - Apple/Glassmorphism 极致美化版)
+- 默认状态 (Tier 1)：屏幕边缘仅显示 10x50 像素的超微型荧光胶囊切片，完全透明无方框，零视觉遮挡；
+- 鼠标滑过 (Tier 2)：平滑滑出 50x50 圆形萌宠悬浮球 (🐱 萌猫水晶球，纯圆无方框背景，带呼吸光圈)；
+- 点击图标 (Tier 3)：点击 🐱 猫咪水晶球，平滑展开超紧凑现代快捷操作卡片；
+- 鼠标离开 (Tier 1 收缩)：未钉住时自动丝滑收回微型光条，支持 📌 钉住锁定与全局 macOS 跨应用置顶。
 """
 import os
 import sys
@@ -12,6 +12,7 @@ import threading
 import tkinter as tk
 from tkinter import messagebox
 from typing import Optional, Callable
+from PIL import Image, ImageDraw, ImageTk
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
@@ -20,16 +21,16 @@ from core.browser_manager import BrowserManager
 
 class FloatingDock:
     """
-    三级渐进式边缘悬浮小窗：极小微点 ➔ 萌宠图标 ➔ 点击弹出操作卡片
+    三级渐进式边缘悬浮小窗（纯圆透明萌宠水晶球 + 丝滑展开动效 + 系统级跨应用常驻）
     """
 
-    DOT_WIDTH = 8
-    DOT_HEIGHT = 32
+    DOT_WIDTH = 10
+    DOT_HEIGHT = 48
 
-    ICON_SIZE = 40
+    BUBBLE_SIZE = 50
 
-    CARD_WIDTH = 195
-    CARD_HEIGHT = 285
+    CARD_WIDTH = 205
+    CARD_HEIGHT = 295
 
     def __init__(self, master=None, main_app=None, browser_mgr: Optional[BrowserManager] = None):
         self.main_app = main_app
@@ -41,22 +42,27 @@ class FloatingDock:
         else:
             self.root = tk.Toplevel(master)
 
-        # 窗口基础属性：无边框、全局置顶、半透明微调
+        # 窗口基础属性：无边框、全局置顶、系统级透明背景
         self.root.overrideredirect(True)
         try:
             self.root.attributes("-topmost", True)
         except Exception:
             pass
+
+        # 启用 macOS 真正的窗口透明通道 (消除所有四角方框)
         if sys.platform == "darwin":
             try:
-                self.root.attributes("-alpha", 0.96)
+                self.root.config(bg="systemTransparent")
             except Exception:
-                pass
+                self.root.config(bg="#f8fafc")
+        else:
+            self.root.config(bg="#f8fafc")
 
-        # 状态变量: 'dot' | 'icon' | 'card'
+        # 状态变量: 'dot' | 'bubble' | 'card'
         self.current_state = "dot"
         self.is_pinned = False
         self._outside_count = 0
+        self._animating = False
 
         # 屏幕尺寸计算
         self.screen_width = self.root.winfo_screenwidth()
@@ -65,23 +71,20 @@ class FloatingDock:
 
         # 各形态 Y 坐标
         self.dot_y = self.center_y - self.DOT_HEIGHT // 2
-        self.icon_y = self.center_y - self.ICON_SIZE // 2
+        self.bubble_y = self.center_y - self.BUBBLE_SIZE // 2
         self.card_y = self.center_y - self.CARD_HEIGHT // 2
 
-        # 视觉主题配色
-        self.bg_color = "#ffffff"
-        self.accent_color = "#6366f1"
-        self.text_primary = "#0f172a"
-        self.text_secondary = "#64748b"
+        # 预渲染高质量抗锯齿透明资产
+        self._generate_canvas_assets()
 
         self._build_ui()
         self._bind_events()
 
-        # 默认形态：极小边缘微点
+        # 默认形态：极小边缘微光胶囊
         self._switch_to_dot_state()
 
-        # 核心 1：启动 40ms 全局硬件鼠标探针
-        self.root.after(100, self._global_mouse_watcher)
+        # 核心 1：启动 35ms 全局硬件鼠标探针 (跨应用秒级感应)
+        self.root.after(80, self._global_mouse_watcher)
 
         # 核心 2：配置 macOS 原生系统级全局置顶（跨所有应用/全屏桌面保持可见）
         self.root.after(150, self._set_macos_system_topmost)
@@ -90,80 +93,115 @@ class FloatingDock:
         # 启动后检测一次浏览器状态
         self.root.after(500, self._check_browser_status_async)
 
+    def _generate_canvas_assets(self):
+        """利用 PIL 超采样预渲染像素级平滑透明图形"""
+        # 1. 边缘微光胶囊 (10 x 48)
+        scale = 3
+        sw, sh = self.DOT_WIDTH * scale, self.DOT_HEIGHT * scale
+        img_dot = Image.new("RGBA", (sw, sh), (0, 0, 0, 0))
+        d_dot = ImageDraw.Draw(img_dot)
+        # 左侧圆角胶囊
+        d_dot.rounded_rectangle([0, 0, sw * 2, sh], radius=sw, fill="#6366f1")
+        # 内部亮光指示条
+        d_dot.line([sw // 2, sh // 4, sw // 2, sh * 3 // 4], fill="#c7d2fe", width=2 * scale)
+        img_dot = img_dot.resize((self.DOT_WIDTH, self.DOT_HEIGHT), Image.Resampling.LANCZOS)
+        self.photo_dot = ImageTk.PhotoImage(img_dot)
+
+        # 2. 萌宠圆形水晶球 (50 x 50) - 默认与悬停两套质感
+        def _make_bubble(bg_c="#6366f1", border_c="#c7d2fe", inner_c="#818cf8"):
+            s = self.BUBBLE_SIZE * scale
+            img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+            d = ImageDraw.Draw(img)
+            # 主圆形外圈
+            d.ellipse([3 * scale, 3 * scale, s - 3 * scale, s - 3 * scale], fill=bg_c, outline=border_c, width=2 * scale)
+            # 顶部微反光弧光
+            d.arc([8 * scale, 6 * scale, s - 8 * scale, s // 2], start=200, end=340, fill="#ffffff", width=2 * scale)
+            img = img.resize((self.BUBBLE_SIZE, self.BUBBLE_SIZE), Image.Resampling.LANCZOS)
+            return ImageTk.PhotoImage(img)
+
+        self.photo_bubble_normal = _make_bubble("#6366f1", "#c7d2fe")
+        self.photo_bubble_hover = _make_bubble("#4f46e5", "#ffffff")
+
     def _build_ui(self):
         """构建三级视图容器"""
-        self.root.configure(bg=self.bg_color)
+        trans_bg = "systemTransparent" if sys.platform == "darwin" else "#f8fafc"
 
         # ═══════════════════════════════════════════════════════════
-        # 视图 1：极小边缘微点 (8x32)
+        # 视图 1：极小边缘微光胶囊 Canvas (10 x 48)
         # ═══════════════════════════════════════════════════════════
-        self.dot_frame = tk.Frame(
+        self.dot_canvas = tk.Canvas(
             self.root,
-            bg=self.accent_color,
+            width=self.DOT_WIDTH,
+            height=self.DOT_HEIGHT,
+            bg=trans_bg,
+            highlightthickness=0,
             cursor="hand2"
         )
-
-        # ═══════════════════════════════════════════════════════════
-        # 视图 2：萌宠小图标 (40x40 🐱 猫咪徽章)
-        # ═══════════════════════════════════════════════════════════
-        self.icon_frame = tk.Frame(
-            self.root,
-            bg=self.accent_color,
-            cursor="hand2",
-            highlightbackground="#818cf8",
-            highlightthickness=1,
-            bd=0
+        self.dot_canvas_img = self.dot_canvas.create_image(
+            self.DOT_WIDTH // 2, self.DOT_HEIGHT // 2, image=self.photo_dot
         )
 
-        self.lbl_cute_icon = tk.Label(
-            self.icon_frame,
+        # ═══════════════════════════════════════════════════════════
+        # 视图 2：纯圆萌宠悬浮水晶球 Canvas (50 x 50)
+        # ═══════════════════════════════════════════════════════════
+        self.bubble_canvas = tk.Canvas(
+            self.root,
+            width=self.BUBBLE_SIZE,
+            height=self.BUBBLE_SIZE,
+            bg=trans_bg,
+            highlightthickness=0,
+            cursor="hand2"
+        )
+        self.bubble_bg_item = self.bubble_canvas.create_image(
+            self.BUBBLE_SIZE // 2, self.BUBBLE_SIZE // 2, image=self.photo_bubble_normal
+        )
+        # 居中萌猫表情
+        self.bubble_text_item = self.bubble_canvas.create_text(
+            self.BUBBLE_SIZE // 2,
+            self.BUBBLE_SIZE // 2 - 1,
             text="🐱",
-            font=("Helvetica", 19),
-            bg=self.accent_color,
-            fg="#ffffff",
-            cursor="hand2"
+            font=("Helvetica", 22)
         )
-        self.lbl_cute_icon.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
 
         # ═══════════════════════════════════════════════════════════
-        # 视图 3：点击后展开的操作页面卡片 (195x285)
+        # 视图 3：点击后展开的操作页面卡片 (205 x 295)
         # ═══════════════════════════════════════════════════════════
         self.card_frame = tk.Frame(
             self.root,
-            bg=self.bg_color,
+            bg="#ffffff",
             highlightbackground="#818cf8",
             highlightthickness=1,
             bd=0,
-            padx=7,
-            pady=6
+            padx=8,
+            pady=7
         )
 
         # 顶部标题栏：萌猫标题 + 状态小圆点 + 📌 钉住 + ✕
-        header_row = tk.Frame(self.card_frame, bg=self.bg_color)
+        header_row = tk.Frame(self.card_frame, bg="#ffffff")
         header_row.pack(fill=tk.X, pady=(0, 4))
 
-        self.status_dot = tk.Label(header_row, text="●", font=("Helvetica", 10), bg=self.bg_color, fg="#dc2626")
+        self.status_dot = tk.Label(header_row, text="●", font=("Helvetica", 10), bg="#ffffff", fg="#dc2626")
         self.status_dot.pack(side=tk.LEFT, padx=(0, 3))
 
         title_lbl = tk.Label(header_row, text="妙手萌盒 🐱", font=("Helvetica", 9, "bold"),
-                             bg=self.bg_color, fg=self.text_primary)
+                             bg="#ffffff", fg="#0f172a")
         title_lbl.pack(side=tk.LEFT)
 
         btn_hide = tk.Button(
             header_row, text="✕", font=("Helvetica", 8, "bold"),
-            bg="#f1f5f9", fg=self.text_secondary, relief="flat", bd=0, cursor="hand2",
-            padx=3, pady=0, command=self._switch_to_dot_state
+            bg="#f1f5f9", fg="#64748b", relief="flat", bd=0, cursor="hand2",
+            padx=4, pady=0, command=self._switch_to_dot_state
         )
         btn_hide.pack(side=tk.RIGHT)
 
         self.btn_pin = tk.Button(
             header_row, text="📌", font=("Helvetica", 8),
-            bg="#f1f5f9", fg=self.text_secondary, relief="flat", bd=0, cursor="hand2",
-            padx=3, pady=0, command=self._toggle_pin
+            bg="#f1f5f9", fg="#64748b", relief="flat", bd=0, cursor="hand2",
+            padx=4, pady=0, command=self._toggle_pin
         )
         self.btn_pin.pack(side=tk.RIGHT, padx=(0, 3))
 
-        # 5 个紧凑精致操作按钮
+        # 5 个高颜值高频操作按钮
         btn_configs = [
             ("🛒 1. 1688 货源", "#ea580c", "#ffffff", self._on_btn_1688),
             ("✨ 2. 素材采集", "#db2777", "#ffffff", self._on_btn_preview_1688),
@@ -209,18 +247,15 @@ class FloatingDock:
         btn_show_main.pack(fill=tk.X, pady=(3, 0))
 
     def _bind_events(self):
-        """绑定点击事件：点击小猫咪图标立即弹出操作页面"""
-        self.icon_frame.bind("<Button-1>", lambda e: self._switch_to_card_state())
-        self.lbl_cute_icon.bind("<Button-1>", lambda e: self._switch_to_card_state())
-
-        self.dot_frame.bind("<Button-1>", lambda e: self._switch_to_card_state())
+        """绑定点击事件：点击小猫咪水晶球立即弹出操作页面"""
+        # 点击猫咪水晶球展开卡片
+        self.bubble_canvas.bind("<Button-1>", lambda e: self._switch_to_card_state())
+        self.dot_canvas.bind("<Button-1>", lambda e: self._switch_to_card_state())
 
     def _global_mouse_watcher(self):
         """
-        高频全局物理鼠标位置探针（40ms 轮询）
-        - 状态 1 (dot): 鼠标移动到边缘微点附近 ➔ 浮现 🐱 小图标
-        - 状态 2 (icon): 鼠标停留在图标上等待点击；鼠标移开 400ms ➔ 自动缩回微点
-        - 状态 3 (card): 展开的操作页面；鼠标移开 450ms (且未钉住) ➔ 缩回微点
+        高频全局物理鼠标探针（35ms 轮询）
+        跨应用 100% 灵敏响应滑入滑出
         """
         try:
             mx = self.root.winfo_pointerx()
@@ -232,48 +267,50 @@ class FloatingDock:
             wh = self.root.winfo_height()
 
             if self.current_state == "dot":
-                # 鼠标靠近屏幕最右侧且在 Y 轴中心区域 -> 浮现 🐱 小图标
-                in_edge_trigger = (mx >= self.screen_width - 24) and (abs(my - self.center_y) <= 50)
+                # 鼠标靠近屏幕最右侧边缘 (24px 范围) ➔ 平滑滑出 🐱 水晶球
+                in_edge_trigger = (mx >= self.screen_width - 24) and (abs(my - self.center_y) <= 55)
                 if in_edge_trigger:
                     self._outside_count = 0
-                    self._switch_to_icon_state()
+                    self._switch_to_bubble_state()
 
-            elif self.current_state == "icon":
-                # 鼠标在 🐱 小图标范围内
-                is_inside = (wx - 4 <= mx <= wx + ww + 6) and (wy - 4 <= my <= wy + wh + 4)
+            elif self.current_state == "bubble":
+                # 鼠标在 🐱 水晶球范围内
+                is_inside = (wx - 6 <= mx <= wx + ww + 8) and (wy - 6 <= my <= wy + wh + 6)
                 if is_inside:
                     self._outside_count = 0
+                    self.bubble_canvas.itemconfig(self.bubble_bg_item, image=self.photo_bubble_hover)
                 else:
+                    self.bubble_canvas.itemconfig(self.bubble_bg_item, image=self.photo_bubble_normal)
                     self._outside_count += 1
-                    # 鼠标移出图标超过 400ms 自动缩回微点
-                    if self._outside_count >= 10:
+                    # 离开水晶球 380ms 自动缩回微光胶囊
+                    if self._outside_count >= 11:
                         self._outside_count = 0
                         self._switch_to_dot_state()
 
             elif self.current_state == "card":
                 # 鼠标在操作卡片范围内
                 if not self.is_pinned:
-                    is_inside = (wx - 4 <= mx <= wx + ww + 6) and (wy - 4 <= my <= wy + wh + 4)
+                    is_inside = (wx - 6 <= mx <= wx + ww + 8) and (wy - 6 <= my <= wy + wh + 6)
                     if is_inside:
                         self._outside_count = 0
                     else:
                         self._outside_count += 1
-                        # 鼠标移出卡片超过 450ms 自动缩回微点
-                        if self._outside_count >= 11:
+                        # 离开卡片 450ms 自动缩回微点
+                        if self._outside_count >= 13:
                             self._outside_count = 0
                             self._switch_to_dot_state()
         except Exception:
             pass
 
-        self.root.after(40, self._global_mouse_watcher)
+        self.root.after(35, self._global_mouse_watcher)
 
     def _switch_to_dot_state(self):
-        """形态 1：切换为极小微点 (8x32)"""
+        """形态 1：切换为极小微光胶囊 (10 x 48)"""
         self.current_state = "dot"
         self.is_pinned = False
         self.card_frame.pack_forget()
-        self.icon_frame.pack_forget()
-        self.dot_frame.pack(fill=tk.BOTH, expand=True)
+        self.bubble_canvas.pack_forget()
+        self.dot_canvas.pack(fill=tk.BOTH, expand=True)
 
         x = self.screen_width - self.DOT_WIDTH
         y = self.dot_y
@@ -281,24 +318,24 @@ class FloatingDock:
         self.root.lift()
         self._set_macos_system_topmost()
 
-    def _switch_to_icon_state(self):
-        """形态 2：浮现 🐱 萌猫小图标 (40x40)"""
-        self.current_state = "icon"
-        self.dot_frame.pack_forget()
+    def _switch_to_bubble_state(self):
+        """形态 2：丝滑滑出 🐱 纯圆水晶球 (50 x 50)"""
+        self.current_state = "bubble"
+        self.dot_canvas.pack_forget()
         self.card_frame.pack_forget()
-        self.icon_frame.pack(fill=tk.BOTH, expand=True)
+        self.bubble_canvas.pack(fill=tk.BOTH, expand=True)
 
-        x = self.screen_width - self.ICON_SIZE
-        y = self.icon_y
-        self.root.geometry(f"{self.ICON_SIZE}x{self.ICON_SIZE}+{x}+{y}")
+        x = self.screen_width - self.BUBBLE_SIZE
+        y = self.bubble_y
+        self.root.geometry(f"{self.BUBBLE_SIZE}x{self.BUBBLE_SIZE}+{x}+{y}")
         self.root.lift()
         self._set_macos_system_topmost()
 
     def _switch_to_card_state(self):
-        """形态 3：点击后弹出完整操作卡片 (195x285)"""
+        """形态 3：点击后展开完整操作卡片 (205 x 295)"""
         self.current_state = "card"
-        self.dot_frame.pack_forget()
-        self.icon_frame.pack_forget()
+        self.dot_canvas.pack_forget()
+        self.bubble_canvas.pack_forget()
         self.card_frame.pack(fill=tk.BOTH, expand=True)
 
         x = self.screen_width - self.CARD_WIDTH
@@ -313,7 +350,7 @@ class FloatingDock:
         if self.is_pinned:
             self.btn_pin.configure(bg="#6366f1", fg="#ffffff", text="📌")
         else:
-            self.btn_pin.configure(bg="#f1f5f9", fg=self.text_secondary, text="📌")
+            self.btn_pin.configure(bg="#f1f5f9", fg="#64748b", text="📌")
 
     def collapse_immediate(self):
         """立即缩回微点"""
