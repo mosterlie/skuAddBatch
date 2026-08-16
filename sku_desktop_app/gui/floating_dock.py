@@ -1,9 +1,9 @@
 """
-桌面边缘吸附快捷唤醒小程序 (Edge Cute Floating Dock)
-- 默认在桌面边缘隐藏为一个极小、可爱的微型萌宠图标（🐱 38x38 圆角小猫咪图标）
-- 配备 40ms 高频全局物理鼠标探针，无论焦点在任何应用（Chrome/微信/VSCode），只要鼠标放上 🐱 瞬间 100% 自动展开卡片
-- 鼠标离开自动收缩为 38x38 纯图标，支持 📌 钉住锁定模式
-- 利用 macOS AppKit 原生系统级置顶（NSStatusWindowLevel + CanJoinAllSpaces），跨应用与全屏常驻
+桌面边缘吸附快捷唤醒小程序 (Edge 3-Tier Cute Floating Dock)
+- 默认状态 (Tier 1)：屏幕边缘仅显示极小的一点 (8px 宽度的微型指示条)，完全零遮挡；
+- 鼠标滑过 (Tier 2)：鼠标移动到边缘微点时，瞬间浮现出可爱的 🐱 萌猫小图标；
+- 点击图标 (Tier 3)：点击 🐱 猫咪图标，立即弹出完整的快捷操作工作台卡片；
+- 鼠标离开自动平滑缩回，支持 📌 钉住锁定与全系统置顶常驻。
 """
 import os
 import sys
@@ -20,12 +20,16 @@ from core.browser_manager import BrowserManager
 
 class FloatingDock:
     """
-    屏幕边缘超紧凑萌宠快捷悬浮小窗（跨应用全局常驻置顶 + 物理鼠标智能探针）
+    三级渐进式边缘悬浮小窗：极小微点 ➔ 萌宠图标 ➔ 点击弹出操作卡片
     """
 
-    EXPANDED_WIDTH = 195
-    EXPANDED_HEIGHT = 285
-    ICON_SIZE = 38
+    DOT_WIDTH = 8
+    DOT_HEIGHT = 32
+
+    ICON_SIZE = 40
+
+    CARD_WIDTH = 195
+    CARD_HEIGHT = 285
 
     def __init__(self, master=None, main_app=None, browser_mgr: Optional[BrowserManager] = None):
         self.main_app = main_app
@@ -49,32 +53,34 @@ class FloatingDock:
             except Exception:
                 pass
 
-        # 状态变量
-        self.is_expanded = False
+        # 状态变量: 'dot' | 'icon' | 'card'
+        self.current_state = "dot"
         self.is_pinned = False
         self._outside_count = 0
 
         # 屏幕尺寸计算
         self.screen_width = self.root.winfo_screenwidth()
         self.screen_height = self.root.winfo_screenheight()
-        # 居中 Y 坐标
-        self.center_y = max(100, int(self.screen_height / 2))
-        self.collapsed_y = self.center_y - self.ICON_SIZE // 2
-        self.expanded_y = self.center_y - self.EXPANDED_HEIGHT // 2
+        self.center_y = max(120, int(self.screen_height / 2))
+
+        # 各形态 Y 坐标
+        self.dot_y = self.center_y - self.DOT_HEIGHT // 2
+        self.icon_y = self.center_y - self.ICON_SIZE // 2
+        self.card_y = self.center_y - self.CARD_HEIGHT // 2
 
         # 视觉主题配色
         self.bg_color = "#ffffff"
-        self.badge_bg = "#6366f1"
+        self.accent_color = "#6366f1"
         self.text_primary = "#0f172a"
         self.text_secondary = "#64748b"
 
         self._build_ui()
         self._bind_events()
 
-        # 初始设置为收起状态（仅 38x38 小图标）
-        self._apply_collapsed_state()
+        # 默认形态：极小边缘微点
+        self._switch_to_dot_state()
 
-        # 核心 1：启动 40ms 全局鼠标高频探针（跨应用 100% 灵敏响应）
+        # 核心 1：启动 40ms 全局硬件鼠标探针
         self.root.after(100, self._global_mouse_watcher)
 
         # 核心 2：配置 macOS 原生系统级全局置顶（跨所有应用/全屏桌面保持可见）
@@ -85,15 +91,24 @@ class FloatingDock:
         self.root.after(500, self._check_browser_status_async)
 
     def _build_ui(self):
-        """构建两套视图：1. 纯微型图标视图（收起时），2. 完整卡片视图（展开时）"""
+        """构建三级视图容器"""
         self.root.configure(bg=self.bg_color)
 
         # ═══════════════════════════════════════════════════════════
-        # 视图 1：纯微型萌宠图标视图 (38x38)
+        # 视图 1：极小边缘微点 (8x32)
         # ═══════════════════════════════════════════════════════════
-        self.icon_badge_frame = tk.Frame(
+        self.dot_frame = tk.Frame(
             self.root,
-            bg=self.badge_bg,
+            bg=self.accent_color,
+            cursor="hand2"
+        )
+
+        # ═══════════════════════════════════════════════════════════
+        # 视图 2：萌宠小图标 (40x40 🐱 猫咪徽章)
+        # ═══════════════════════════════════════════════════════════
+        self.icon_frame = tk.Frame(
+            self.root,
+            bg=self.accent_color,
             cursor="hand2",
             highlightbackground="#818cf8",
             highlightthickness=1,
@@ -101,16 +116,17 @@ class FloatingDock:
         )
 
         self.lbl_cute_icon = tk.Label(
-            self.icon_badge_frame,
+            self.icon_frame,
             text="🐱",
-            font=("Helvetica", 18),
-            bg=self.badge_bg,
-            fg="#ffffff"
+            font=("Helvetica", 19),
+            bg=self.accent_color,
+            fg="#ffffff",
+            cursor="hand2"
         )
         self.lbl_cute_icon.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
 
         # ═══════════════════════════════════════════════════════════
-        # 视图 2：展开后的超紧凑核心快捷卡片面板 (195x285)
+        # 视图 3：点击后展开的操作页面卡片 (195x285)
         # ═══════════════════════════════════════════════════════════
         self.card_frame = tk.Frame(
             self.root,
@@ -136,7 +152,7 @@ class FloatingDock:
         btn_hide = tk.Button(
             header_row, text="✕", font=("Helvetica", 8, "bold"),
             bg="#f1f5f9", fg=self.text_secondary, relief="flat", bd=0, cursor="hand2",
-            padx=3, pady=0, command=self.collapse_immediate
+            padx=3, pady=0, command=self._switch_to_dot_state
         )
         btn_hide.pack(side=tk.RIGHT)
 
@@ -147,7 +163,7 @@ class FloatingDock:
         )
         self.btn_pin.pack(side=tk.RIGHT, padx=(0, 3))
 
-        # 5 个紧凑精致胶囊按钮
+        # 5 个紧凑精致操作按钮
         btn_configs = [
             ("🛒 1. 1688 货源", "#ea580c", "#ffffff", self._on_btn_1688),
             ("✨ 2. 素材采集", "#db2777", "#ffffff", self._on_btn_preview_1688),
@@ -193,16 +209,18 @@ class FloatingDock:
         btn_show_main.pack(fill=tk.X, pady=(3, 0))
 
     def _bind_events(self):
-        """绑定点击事件与基础事件"""
-        # 点击猫咪也可以直接展开
-        self.icon_badge_frame.bind("<Button-1>", lambda e: self._apply_expanded_state())
-        self.lbl_cute_icon.bind("<Button-1>", lambda e: self._apply_expanded_state())
+        """绑定点击事件：点击小猫咪图标立即弹出操作页面"""
+        self.icon_frame.bind("<Button-1>", lambda e: self._switch_to_card_state())
+        self.lbl_cute_icon.bind("<Button-1>", lambda e: self._switch_to_card_state())
+
+        self.dot_frame.bind("<Button-1>", lambda e: self._switch_to_card_state())
 
     def _global_mouse_watcher(self):
         """
         高频全局物理鼠标位置探针（40ms 轮询）
-        在 macOS 上，即使当前焦点在 Chrome / 微信 / VS Code 等其他软件中，
-        也能 100% 精准检测物理鼠标是否移动到了 🐱 猫咪小图标上，并瞬间展开卡片！
+        - 状态 1 (dot): 鼠标移动到边缘微点附近 ➔ 浮现 🐱 小图标
+        - 状态 2 (icon): 鼠标停留在图标上等待点击；鼠标移开 400ms ➔ 自动缩回微点
+        - 状态 3 (card): 展开的操作页面；鼠标移开 450ms (且未钉住) ➔ 缩回微点
         """
         try:
             mx = self.root.winfo_pointerx()
@@ -213,51 +231,79 @@ class FloatingDock:
             ww = self.root.winfo_width()
             wh = self.root.winfo_height()
 
-            # 增加边缘容差，确保鼠标只要划到屏幕最右侧边缘就能轻松触发
-            is_inside = (wx - 4 <= mx <= wx + ww + 10) and (wy - 4 <= my <= wy + wh + 4)
+            if self.current_state == "dot":
+                # 鼠标靠近屏幕最右侧且在 Y 轴中心区域 -> 浮现 🐱 小图标
+                in_edge_trigger = (mx >= self.screen_width - 24) and (abs(my - self.center_y) <= 50)
+                if in_edge_trigger:
+                    self._outside_count = 0
+                    self._switch_to_icon_state()
 
-            if not self.is_expanded:
-                # 当前处于 38x38 小图标形态：鼠标滑到图标上 -> 瞬间自动展开！
+            elif self.current_state == "icon":
+                # 鼠标在 🐱 小图标范围内
+                is_inside = (wx - 4 <= mx <= wx + ww + 6) and (wy - 4 <= my <= wy + wh + 4)
                 if is_inside:
                     self._outside_count = 0
-                    self._apply_expanded_state()
-            else:
-                # 当前处于展开大卡片形态：
+                else:
+                    self._outside_count += 1
+                    # 鼠标移出图标超过 400ms 自动缩回微点
+                    if self._outside_count >= 10:
+                        self._outside_count = 0
+                        self._switch_to_dot_state()
+
+            elif self.current_state == "card":
+                # 鼠标在操作卡片范围内
                 if not self.is_pinned:
+                    is_inside = (wx - 4 <= mx <= wx + ww + 6) and (wy - 4 <= my <= wy + wh + 4)
                     if is_inside:
                         self._outside_count = 0
                     else:
                         self._outside_count += 1
-                        # 连续 8 次（约 320ms）未在卡片内，自动平滑收起为小图标
-                        if self._outside_count >= 8:
+                        # 鼠标移出卡片超过 450ms 自动缩回微点
+                        if self._outside_count >= 11:
                             self._outside_count = 0
-                            self._apply_collapsed_state()
+                            self._switch_to_dot_state()
         except Exception:
             pass
 
         self.root.after(40, self._global_mouse_watcher)
 
-    def _apply_collapsed_state(self):
-        """切换到贴边小图标形态 (38x38)"""
-        self.is_expanded = False
+    def _switch_to_dot_state(self):
+        """形态 1：切换为极小微点 (8x32)"""
+        self.current_state = "dot"
+        self.is_pinned = False
         self.card_frame.pack_forget()
-        self.icon_badge_frame.pack(fill=tk.BOTH, expand=True)
+        self.icon_frame.pack_forget()
+        self.dot_frame.pack(fill=tk.BOTH, expand=True)
+
+        x = self.screen_width - self.DOT_WIDTH
+        y = self.dot_y
+        self.root.geometry(f"{self.DOT_WIDTH}x{self.DOT_HEIGHT}+{x}+{y}")
+        self.root.lift()
+        self._set_macos_system_topmost()
+
+    def _switch_to_icon_state(self):
+        """形态 2：浮现 🐱 萌猫小图标 (40x40)"""
+        self.current_state = "icon"
+        self.dot_frame.pack_forget()
+        self.card_frame.pack_forget()
+        self.icon_frame.pack(fill=tk.BOTH, expand=True)
 
         x = self.screen_width - self.ICON_SIZE
-        y = self.collapsed_y
+        y = self.icon_y
         self.root.geometry(f"{self.ICON_SIZE}x{self.ICON_SIZE}+{x}+{y}")
         self.root.lift()
         self._set_macos_system_topmost()
 
-    def _apply_expanded_state(self):
-        """切换到展开卡片形态 (195x285)"""
-        self.is_expanded = True
-        self.icon_badge_frame.pack_forget()
+    def _switch_to_card_state(self):
+        """形态 3：点击后弹出完整操作卡片 (195x285)"""
+        self.current_state = "card"
+        self.dot_frame.pack_forget()
+        self.icon_frame.pack_forget()
         self.card_frame.pack(fill=tk.BOTH, expand=True)
 
-        x = self.screen_width - self.EXPANDED_WIDTH
-        y = self.expanded_y
-        self.root.geometry(f"{self.EXPANDED_WIDTH}x{self.EXPANDED_HEIGHT}+{x}+{y}")
+        x = self.screen_width - self.CARD_WIDTH
+        y = self.card_y
+        self.root.geometry(f"{self.CARD_WIDTH}x{self.CARD_HEIGHT}+{x}+{y}")
         self.root.lift()
         self._set_macos_system_topmost()
 
@@ -266,16 +312,12 @@ class FloatingDock:
         self.is_pinned = not self.is_pinned
         if self.is_pinned:
             self.btn_pin.configure(bg="#6366f1", fg="#ffffff", text="📌")
-            if not self.is_expanded:
-                self._apply_expanded_state()
         else:
             self.btn_pin.configure(bg="#f1f5f9", fg=self.text_secondary, text="📌")
 
     def collapse_immediate(self):
-        """立即收起回小图标"""
-        self.is_pinned = False
-        self.btn_pin.configure(bg="#f1f5f9", fg=self.text_secondary, text="📌")
-        self._apply_collapsed_state()
+        """立即缩回微点"""
+        self._switch_to_dot_state()
 
     def _set_macos_system_topmost(self):
         """利用 macOS AppKit 原生接口将悬浮窗提升为全局系统级悬浮 (跨所有第三方应用与全屏桌面均保持可见)"""
@@ -379,7 +421,7 @@ class FloatingDock:
                 self.main_app.root.focus_force()
             except Exception:
                 pass
-        self.collapse_immediate()
+        self._switch_to_dot_state()
 
     def show(self):
         self.root.deiconify()
