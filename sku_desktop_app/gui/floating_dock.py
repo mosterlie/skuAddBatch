@@ -1,9 +1,9 @@
 """
-桌面边缘吸附快捷唤醒小程序 (Edge 3-Tier Cute Floating Dock - 方案一：🐾 探出小猫爪版)
-- 默认隐藏状态 (Tier 1)：屏幕右侧边缘仅露出一只 24x28 像素的小萌猫爪 (🐾)，半掩在边框后，零视觉负担；
-- 鼠标滑过状态 (Tier 2)：小猫探出头，瞬间滑出 50x50 纯圆透明萌猫水晶球 (🐱 带呼吸光圈与微反光)；
-- 点击展开状态 (Tier 3)：点击 🐱 水晶球，弹出 16px 圆角高颜值快捷操作工作台卡片；
-- 鼠标移开优雅收起为 🐾 猫爪，支持 📌 钉住锁定、右键快捷菜单、Esc 一键收回与全局跨应用置顶。
+桌面边缘吸附快捷唤醒小程序 (Edge 3-Tier Cute Floating Dock - 1:1 像素级方案一还原版)
+- 默认隐藏状态 (Tier 1)：屏幕右侧边缘仅露出方案图同款 3D 萌萌蓬松小猫爪 (🐾 粉嫩肉垫)，无任何方框底色，零视觉负担；
+- 鼠标滑过状态 (Tier 2)：小猫探出头，平滑滑出 3D 纯圆发光萌猫水晶球 (🐱 方案图同款发光球)；
+- 点击展开状态 (Tier 3)：点击展开 1:1 还原的高颜值磨砂卡片，包含 5 大精美彩色胶囊药丸按钮；
+- 全局 30ms 硬件鼠标探针 + macOS AppKit 系统级全局置顶。
 """
 import os
 import sys
@@ -12,7 +12,7 @@ import threading
 import tkinter as tk
 from tkinter import messagebox
 from typing import Optional, Callable
-from PIL import Image, ImageDraw, ImageTk
+from PIL import Image, ImageDraw, ImageFilter, ImageTk
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
@@ -21,16 +21,16 @@ from core.browser_manager import BrowserManager
 
 class FloatingDock:
     """
-    三级渐进式边缘悬浮小窗（🐾 探出小猫爪 ➔ 🐱 萌猫水晶球 ➔ 展开操作面板）
+    1:1 像素级还原方案效果图的萌猫悬浮岛
     """
 
-    PAW_WIDTH = 24
-    PAW_HEIGHT = 28
+    PAW_WIDTH = 46
+    PAW_HEIGHT = 54
 
-    BUBBLE_SIZE = 50
+    BUBBLE_SIZE = 56
 
-    CARD_WIDTH = 205
-    CARD_HEIGHT = 295
+    CARD_WIDTH = 215
+    CARD_HEIGHT = 310
 
     def __init__(self, master=None, main_app=None, browser_mgr: Optional[BrowserManager] = None):
         self.main_app = main_app
@@ -49,7 +49,7 @@ class FloatingDock:
         except Exception:
             pass
 
-        # 启用 macOS 真正的窗口透明通道
+        # 启用 macOS 真正的窗口透明通道 (消除一切方框白底)
         if sys.platform == "darwin":
             try:
                 self.root.config(bg="systemTransparent")
@@ -73,13 +73,13 @@ class FloatingDock:
         self.bubble_y = self.center_y - self.BUBBLE_SIZE // 2
         self.card_y = self.center_y - self.CARD_HEIGHT // 2
 
-        # 预渲染高质量抗锯齿透明资产
-        self._generate_canvas_assets()
+        # 载入与预渲染 1:1 高清透明资产
+        self._load_or_generate_assets()
 
         self._build_ui()
         self._bind_events()
 
-        # 默认形态：🐾 探出小猫爪
+        # 默认形态：🐾 探出 3D 小猫爪
         self._switch_to_paw_state()
 
         # 核心 1：启动 30ms 全局硬件鼠标探针 (跨应用秒级感应)
@@ -92,40 +92,56 @@ class FloatingDock:
         # 启动后检测一次浏览器状态
         self.root.after(500, self._check_browser_status_async)
 
-    def _generate_canvas_assets(self):
-        """利用 PIL 超采样预渲染像素级平滑透明图形"""
-        scale = 3
+    def _load_or_generate_assets(self):
+        """载入方案同款高清透明素材，若不存在则使用高保真 PIL 渲染"""
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        mockup_paw_path = os.path.join(current_dir, "mockup_paw_exact.png")
+        mockup_orb_path = os.path.join(current_dir, "mockup_orb_exact.png")
 
-        # 1. 探出小猫爪底座背景 (24 x 28) - 左侧圆弧，右侧贴边
-        pw, ph = self.PAW_WIDTH * scale, self.PAW_HEIGHT * scale
-        img_paw = Image.new("RGBA", (pw, ph), (0, 0, 0, 0))
-        d_paw = ImageDraw.Draw(img_paw)
-        r_paw = ph // 2
-        d_paw.rounded_rectangle([0, 0, pw * 2, ph], radius=r_paw, fill="#818cf8", outline="#c7d2fe", width=scale)
-        img_paw = img_paw.resize((self.PAW_WIDTH, self.PAW_HEIGHT), Image.Resampling.LANCZOS)
-        self.photo_paw_bg = ImageTk.PhotoImage(img_paw)
+        # 1. 3D 蓬松小猫爪素材
+        if os.path.exists(mockup_paw_path):
+            img_paw = Image.open(mockup_paw_path).convert("RGBA")
+            img_paw = img_paw.resize((self.PAW_WIDTH, self.PAW_HEIGHT), Image.Resampling.LANCZOS)
+            self.photo_paw = ImageTk.PhotoImage(img_paw)
+        else:
+            self.photo_paw = self._render_fallback_paw()
 
-        # 2. 萌宠圆形水晶球 (50 x 50) - 默认与悬停两套质感
-        def _make_bubble(bg_c="#6366f1", border_c="#c7d2fe"):
-            s = self.BUBBLE_SIZE * scale
-            img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
-            d = ImageDraw.Draw(img)
-            # 主圆形外圈
-            d.ellipse([3 * scale, 3 * scale, s - 3 * scale, s - 3 * scale], fill=bg_c, outline=border_c, width=2 * scale)
-            # 顶部微反光弧光
-            d.arc([8 * scale, 6 * scale, s - 8 * scale, s // 2], start=200, end=340, fill="#ffffff", width=2 * scale)
-            img = img.resize((self.BUBBLE_SIZE, self.BUBBLE_SIZE), Image.Resampling.LANCZOS)
-            return ImageTk.PhotoImage(img)
+        # 2. 3D 萌猫发光水晶球素材
+        if os.path.exists(mockup_orb_path):
+            img_orb = Image.open(mockup_orb_path).convert("RGBA")
+            img_orb = img_orb.resize((self.BUBBLE_SIZE, self.BUBBLE_SIZE), Image.Resampling.LANCZOS)
+            self.photo_orb = ImageTk.PhotoImage(img_orb)
+        else:
+            self.photo_orb = self._render_fallback_orb()
 
-        self.photo_bubble_normal = _make_bubble("#6366f1", "#c7d2fe")
-        self.photo_bubble_hover = _make_bubble("#4f46e5", "#ffffff")
+    def _render_fallback_paw(self):
+        """高质量备用 3D 猫爪渲染"""
+        w, h = self.PAW_WIDTH * 3, self.PAW_HEIGHT * 3
+        img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        d.ellipse([w // 3, h // 6, w + w // 3, h * 5 // 6], fill="#faf8f5")
+        d.rectangle([w * 2 // 3, h // 4, w, h * 3 // 4], fill="#f5f0e8")
+        d.ellipse([w * 0.42, h * 0.38, w * 0.75, h * 0.68], fill="#fb7185", outline="#fda4af", width=3)
+        for tx, ty in [(0.32, 0.16), (0.16, 0.30), (0.16, 0.52), (0.32, 0.66)]:
+            d.ellipse([w * tx, h * ty, w * (tx + 0.2), h * (ty + 0.18)], fill="#fb7185", outline="#fda4af", width=3)
+        img = img.resize((self.PAW_WIDTH, self.PAW_HEIGHT), Image.Resampling.LANCZOS)
+        return ImageTk.PhotoImage(img)
+
+    def _render_fallback_orb(self):
+        """高质量备用 3D 水晶球渲染"""
+        s = self.BUBBLE_SIZE * 3
+        img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        d.ellipse([6, 6, s - 6, s - 6], fill="#8b5cf6", outline="#c084fc", width=6)
+        img = img.resize((self.BUBBLE_SIZE, self.BUBBLE_SIZE), Image.Resampling.LANCZOS)
+        return ImageTk.PhotoImage(img)
 
     def _build_ui(self):
         """构建三级视图容器"""
         trans_bg = "systemTransparent" if sys.platform == "darwin" else "#f8fafc"
 
         # ═══════════════════════════════════════════════════════════
-        # 视图 1：🐾 探出小猫爪 Canvas (24 x 28)
+        # 视图 1：3D 蓬松探出小猫爪 Canvas (46 x 54)
         # ═══════════════════════════════════════════════════════════
         self.paw_canvas = tk.Canvas(
             self.root,
@@ -136,18 +152,11 @@ class FloatingDock:
             cursor="hand2"
         )
         self.paw_canvas.create_image(
-            self.PAW_WIDTH // 2, self.PAW_HEIGHT // 2, image=self.photo_paw_bg
-        )
-        # 居中小猫爪 emoji
-        self.paw_canvas.create_text(
-            self.PAW_WIDTH // 2 - 1,
-            self.PAW_HEIGHT // 2,
-            text="🐾",
-            font=("Helvetica", 14)
+            self.PAW_WIDTH // 2, self.PAW_HEIGHT // 2, image=self.photo_paw
         )
 
         # ═══════════════════════════════════════════════════════════
-        # 视图 2：纯圆萌宠悬浮水晶球 Canvas (50 x 50)
+        # 视图 2：3D 纯圆发光萌猫水晶球 Canvas (56 x 56)
         # ═══════════════════════════════════════════════════════════
         self.bubble_canvas = tk.Canvas(
             self.root,
@@ -157,40 +166,46 @@ class FloatingDock:
             highlightthickness=0,
             cursor="hand2"
         )
-        self.bubble_bg_item = self.bubble_canvas.create_image(
-            self.BUBBLE_SIZE // 2, self.BUBBLE_SIZE // 2, image=self.photo_bubble_normal
-        )
-        # 居中萌猫表情
-        self.bubble_text_item = self.bubble_canvas.create_text(
-            self.BUBBLE_SIZE // 2,
-            self.BUBBLE_SIZE // 2 - 1,
-            text="🐱",
-            font=("Helvetica", 22)
+        self.bubble_canvas.create_image(
+            self.BUBBLE_SIZE // 2, self.BUBBLE_SIZE // 2, image=self.photo_orb
         )
 
         # ═══════════════════════════════════════════════════════════
-        # 视图 3：点击后展开的操作页面卡片 (205 x 295)
+        # 视图 3：1:1 还原方案效果图的磨砂操作卡片 (215 x 310)
         # ═══════════════════════════════════════════════════════════
         self.card_frame = tk.Frame(
             self.root,
             bg="#ffffff",
-            highlightbackground="#818cf8",
-            highlightthickness=1,
+            highlightbackground="#c084fc",
+            highlightthickness=2,
             bd=0,
-            padx=8,
-            pady=7
+            padx=10,
+            pady=8
         )
 
-        # 顶部标题栏：萌猫标题 + 状态小圆点 + 📌 钉住 + ✕
+        # 顶部标题栏：萌猫头像 + 状态圆点 + 标题 + 📌 钉住 + ✕
         header_row = tk.Frame(self.card_frame, bg="#ffffff")
-        header_row.pack(fill=tk.X, pady=(0, 4))
+        header_row.pack(fill=tk.X, pady=(0, 6))
 
-        self.status_dot = tk.Label(header_row, text="●", font=("Helvetica", 10), bg="#ffffff", fg="#dc2626")
-        self.status_dot.pack(side=tk.LEFT, padx=(0, 3))
+        # 小猫头像微缩
+        lbl_avatar = tk.Label(header_row, text="🐱", font=("Helvetica", 14), bg="#f3e8ff", fg="#7c3aed", padx=4, pady=2)
+        lbl_avatar.pack(side=tk.LEFT, padx=(0, 4))
 
-        title_lbl = tk.Label(header_row, text="妙手萌盒 🐱", font=("Helvetica", 9, "bold"),
+        title_box = tk.Frame(header_row, bg="#ffffff")
+        title_box.pack(side=tk.LEFT)
+
+        title_lbl = tk.Label(title_box, text="Miaoshou Assistant", font=("Helvetica", 9, "bold"),
                              bg="#ffffff", fg="#0f172a")
-        title_lbl.pack(side=tk.LEFT)
+        title_lbl.pack(anchor="w")
+
+        status_sub = tk.Frame(title_box, bg="#ffffff")
+        status_sub.pack(anchor="w")
+
+        self.status_dot = tk.Label(status_sub, text="●", font=("Helvetica", 8), bg="#ffffff", fg="#16a34a")
+        self.status_dot.pack(side=tk.LEFT, padx=(0, 2))
+
+        self.status_txt = tk.Label(status_sub, text="Online", font=("Helvetica", 8), bg="#ffffff", fg="#64748b")
+        self.status_txt.pack(side=tk.LEFT)
 
         btn_hide = tk.Button(
             header_row, text="✕", font=("Helvetica", 8, "bold"),
@@ -206,13 +221,13 @@ class FloatingDock:
         )
         self.btn_pin.pack(side=tk.RIGHT, padx=(0, 3))
 
-        # 5 个高颜值高频操作胶囊按钮
+        # 5 大精美彩色胶囊药丸按钮（1:1 匹配效果图）
         btn_configs = [
-            ("🛒 1. 1688 货源", "#ea580c", "#ffffff", self._on_btn_1688),
-            ("✨ 2. 素材采集", "#db2777", "#ffffff", self._on_btn_preview_1688),
-            ("📊 3. SKU 核算", "#059669", "#ffffff", self._on_btn_calcfee),
-            ("🚀 4. 打开妙手", "#2563eb", "#ffffff", self._on_btn_miaoshou),
-            ("▶ 5. 批量录入", "#7c3aed", "#ffffff", self._on_btn_auto_execute),
+            ("🔍  1688 货源直达", "#f97316", "#ffffff", self._on_btn_1688),
+            ("📸  1688 素材采集", "#f43f5e", "#ffffff", self._on_btn_preview_1688),
+            ("📊  SKU 智能核算", "#22c55e", "#ffffff", self._on_btn_calcfee),
+            ("🔑  妙手免密直达", "#3b82f6", "#ffffff", self._on_btn_miaoshou),
+            ("📦  一键批量录入", "#a855f7", "#ffffff", self._on_btn_auto_execute),
         ]
 
         for text, bg_c, fg_c, cmd in btn_configs:
@@ -228,17 +243,17 @@ class FloatingDock:
                 relief="flat",
                 bd=0,
                 cursor="hand2",
-                pady=4,
+                pady=5,
                 anchor="w",
-                padx=8,
+                padx=10,
                 command=cmd
             )
-            btn.pack(fill=tk.X, pady=2)
+            btn.pack(fill=tk.X, pady=3)
 
-        # 底部展开主窗口按钮
+        # 底部展开主窗口药丸按钮
         btn_show_main = tk.Button(
             self.card_frame,
-            text="🖥️ 完整控制台",
+            text="🖥️  展开完整控制台",
             font=("Helvetica", 8, "bold"),
             bg="#f1f5f9",
             fg="#475569",
@@ -246,10 +261,10 @@ class FloatingDock:
             relief="flat",
             bd=0,
             cursor="hand2",
-            pady=3,
+            pady=4,
             command=self._on_show_main_window
         )
-        btn_show_main.pack(fill=tk.X, pady=(3, 0))
+        btn_show_main.pack(fill=tk.X, pady=(4, 0))
 
         # ═══════════════════════════════════════════════════════════
         # 4. 右键快捷弹出菜单 (Context Menu)
@@ -263,11 +278,9 @@ class FloatingDock:
 
     def _bind_events(self):
         """绑定点击、右键与 Esc 键退出事件"""
-        # 点击猫爪或水晶球直接展开卡片
         self.paw_canvas.bind("<Button-1>", lambda e: self._switch_to_card_state())
         self.bubble_canvas.bind("<Button-1>", lambda e: self._switch_to_card_state())
 
-        # 右键点击弹出快捷菜单 (macOS <Button-2> / <Button-3>)
         self.paw_canvas.bind("<Button-2>", self._show_context_menu)
         self.paw_canvas.bind("<Button-3>", self._show_context_menu)
         self.bubble_canvas.bind("<Button-2>", self._show_context_menu)
@@ -275,7 +288,6 @@ class FloatingDock:
         self.card_frame.bind("<Button-2>", self._show_context_menu)
         self.card_frame.bind("<Button-3>", self._show_context_menu)
 
-        # 全局 Esc 键快速收缩
         self.root.bind("<Escape>", lambda e: self._switch_to_paw_state())
 
     def _show_context_menu(self, event):
@@ -300,20 +312,18 @@ class FloatingDock:
             wh = self.root.winfo_height()
 
             if self.current_state == "paw":
-                # 鼠标靠近屏幕最右侧边缘 (30px 范围) ➔ 平滑滑出 🐱 水晶球
-                in_edge_trigger = (mx >= self.screen_width - 32) and (abs(my - self.center_y) <= 50)
+                # 鼠标靠近屏幕最右侧边缘 (40px 范围) ➔ 平滑滑出 🐱 水晶球
+                in_edge_trigger = (mx >= self.screen_width - 45) and (abs(my - self.center_y) <= 60)
                 if in_edge_trigger:
                     self._outside_count = 0
                     self._switch_to_bubble_state()
 
             elif self.current_state == "bubble":
                 # 鼠标在 🐱 水晶球范围内
-                is_inside = (wx - 6 <= mx <= wx + ww + 8) and (wy - 6 <= my <= wy + wh + 6)
+                is_inside = (wx - 8 <= mx <= wx + ww + 10) and (wy - 8 <= my <= wy + wh + 8)
                 if is_inside:
                     self._outside_count = 0
-                    self.bubble_canvas.itemconfig(self.bubble_bg_item, image=self.photo_bubble_hover)
                 else:
-                    self.bubble_canvas.itemconfig(self.bubble_bg_item, image=self.photo_bubble_normal)
                     self._outside_count += 1
                     # 离开水晶球 350ms 自动缩回 🐾 小猫爪
                     if self._outside_count >= 11:
@@ -323,7 +333,7 @@ class FloatingDock:
             elif self.current_state == "card":
                 # 鼠标在操作卡片范围内
                 if not self.is_pinned:
-                    is_inside = (wx - 6 <= mx <= wx + ww + 8) and (wy - 6 <= my <= wy + wh + 6)
+                    is_inside = (wx - 8 <= mx <= wx + ww + 10) and (wy - 8 <= my <= wy + wh + 8)
                     if is_inside:
                         self._outside_count = 0
                     else:
@@ -338,7 +348,7 @@ class FloatingDock:
         self.root.after(30, self._global_mouse_watcher)
 
     def _switch_to_paw_state(self):
-        """形态 1：切换为 🐾 探出小猫爪 (24 x 28)"""
+        """形态 1：切换为 🐾 3D 蓬松探出小猫爪 (46 x 54)"""
         self.current_state = "paw"
         self.is_pinned = False
         self.card_frame.pack_forget()
@@ -352,7 +362,7 @@ class FloatingDock:
         self._set_macos_system_topmost()
 
     def _switch_to_bubble_state(self):
-        """形态 2：丝滑滑出 🐱 纯圆水晶球 (50 x 50)"""
+        """形态 2：丝滑滑出 🐱 3D 纯圆水晶球 (56 x 56)"""
         self.current_state = "bubble"
         self.paw_canvas.pack_forget()
         self.card_frame.pack_forget()
@@ -365,7 +375,7 @@ class FloatingDock:
         self._set_macos_system_topmost()
 
     def _switch_to_card_state(self):
-        """形态 3：点击后展开完整操作卡片 (205 x 295)"""
+        """形态 3：点击后展开 1:1 磨砂操作卡片 (215 x 310)"""
         self.current_state = "card"
         self.paw_canvas.pack_forget()
         self.bubble_canvas.pack_forget()
@@ -426,8 +436,10 @@ class FloatingDock:
             def _update():
                 if ready:
                     self.status_dot.configure(fg="#16a34a")
+                    self.status_txt.configure(text="Online")
                 else:
                     self.status_dot.configure(fg="#dc2626")
+                    self.status_txt.configure(text="Offline")
             self.root.after(0, _update)
 
         threading.Thread(target=_worker, daemon=True).start()
