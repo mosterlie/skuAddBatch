@@ -1,31 +1,33 @@
 """
-桌面边缘吸附快捷唤醒小程序 (Edge Floating Dock)
-支持默认贴边静默隐藏、鼠标滑过平滑滑出展开、核心按钮一键直达、钉住锁定与一键呼出主控制台。
+桌面边缘吸附快捷唤醒小程序 (Edge Cute Floating Dock)
+- 默认在桌面边缘隐藏为可爱的萌宠把手（🐱 萌猫），占用极小空间
+- 利用 macOS AppKit 原生系统级置顶（NSStatusWindowLevel + CanJoinAllSpaces），切换到任何第三方应用（Chrome、微信、VSCode等）均常驻屏幕最前台可见
+- 鼠标移动过去瞬间滑出精美的超紧凑快捷操作卡片
+- 鼠标移开自动收起，支持 📌 钉住模式与一键直达
 """
 import os
 import sys
 import time
 import threading
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import messagebox
 from typing import Optional, Callable
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 from core.browser_manager import BrowserManager
-from core.plugin_server import PluginServerManager
 
 
 class FloatingDock:
     """
-    屏幕边缘贴靠快捷唤醒悬浮岛
+    屏幕边缘超紧凑萌系快捷唤醒小窗（跨应用全局常驻置顶）
     """
 
-    EXPANDED_WIDTH = 250
-    EXPANDED_HEIGHT = 415
-    HANDLE_WIDTH = 26
-    ANIM_STEPS = 8
-    ANIM_INTERVAL_MS = 12
+    EXPANDED_WIDTH = 195
+    EXPANDED_HEIGHT = 285
+    HANDLE_WIDTH = 32
+    ANIM_STEPS = 6
+    ANIM_INTERVAL_MS = 8
 
     def __init__(self, master=None, main_app=None, browser_mgr: Optional[BrowserManager] = None):
         self.main_app = main_app
@@ -55,10 +57,10 @@ class FloatingDock:
         self._animating = False
         self._collapse_timer = None
 
-        # 屏幕几何尺寸计算
+        # 屏幕几何尺寸计算（右侧居中吸附）
         self.screen_width = self.root.winfo_screenwidth()
         self.screen_height = self.root.winfo_screenheight()
-        self.pos_y = max(80, int((self.screen_height - self.EXPANDED_HEIGHT) / 2))
+        self.pos_y = max(100, int((self.screen_height - self.EXPANDED_HEIGHT) / 2))
 
         self.x_collapsed = self.screen_width - self.HANDLE_WIDTH
         self.x_expanded = self.screen_width - self.EXPANDED_WIDTH
@@ -69,96 +71,114 @@ class FloatingDock:
 
         # 视觉主题配色
         self.bg_color = "#ffffff"
-        self.border_color = "#cbd5e1"
+        self.handle_bg = "#6366f1"
         self.text_primary = "#0f172a"
         self.text_secondary = "#64748b"
 
         self._build_ui()
         self._bind_events()
 
+        # 核心：配置 macOS 原生系统级全局置顶（跨所有应用/全屏桌面保持可见）
+        self.root.after(100, self._set_macos_system_topmost)
+        self.root.after(2000, self._maintain_macos_topmost)
+
         # 启动后检测一次浏览器状态
-        self.root.after(600, self._check_browser_status_async)
+        self.root.after(500, self._check_browser_status_async)
+
+    def _set_macos_system_topmost(self):
+        """利用 macOS AppKit 原生接口将悬浮窗提升为全局系统级悬浮 (跨所有第三方应用与全屏桌面均保持可见)"""
+        if sys.platform != "darwin":
+            return
+        try:
+            import AppKit
+            self.root.update_idletasks()
+            target_h = self.EXPANDED_HEIGHT
+
+            for win in AppKit.NSApp.windows():
+                frame = win.frame()
+                if abs(frame.size.height - target_h) < 20:
+                    # 提升到状态栏级/浮动窗口层级（高于普通应用和全屏 Chrome 窗口）
+                    win.setLevel_(AppKit.NSStatusWindowLevel)
+                    # 允许跨所有桌面 Space 共享、支持全屏辅助显示、固定不随切换丢失
+                    win.setCollectionBehavior_(
+                        AppKit.NSWindowCollectionBehaviorCanJoinAllSpaces |
+                        AppKit.NSWindowCollectionBehaviorFullScreenAuxiliary |
+                        AppKit.NSWindowCollectionBehaviorStationary
+                    )
+                    # 彻底解决切换应用时悬浮窗消失的问题：切换应用时不隐藏！
+                    win.setHidesOnDeactivate_(False)
+        except Exception:
+            pass
+
+    def _maintain_macos_topmost(self):
+        """定期维护系统置顶状态，防止偶发降级"""
+        try:
+            self._set_macos_system_topmost()
+            self.root.lift()
+        except Exception:
+            pass
+        self.root.after(3000, self._maintain_macos_topmost)
 
     def _build_ui(self):
-        """构建悬浮岛 UI 布局 (包含左侧吸附把手 + 右侧核心卡片面板)"""
-        # 最外层容器（含边框质感）
+        """构建超紧凑萌系悬浮小窗布局"""
+        # 最外层容器
         self.outer_frame = tk.Frame(
             self.root,
             bg=self.bg_color,
-            highlightbackground="#94a3b8",
+            highlightbackground="#818cf8",
             highlightthickness=1,
             bd=0
         )
         self.outer_frame.pack(fill=tk.BOTH, expand=True)
 
-        # 1. 边缘微型吸附把手 (Collapsed Handle)
-        self.handle_frame = tk.Frame(self.outer_frame, bg="#2563eb", width=self.HANDLE_WIDTH, cursor="hand2")
+        # 1. 边缘萌宠把手 (Collapsed Handle - 可爱猫咪头像)
+        self.handle_frame = tk.Frame(self.outer_frame, bg=self.handle_bg, width=self.HANDLE_WIDTH, cursor="hand2")
         self.handle_frame.pack(side=tk.LEFT, fill=tk.Y)
         self.handle_frame.pack_propagate(False)
 
-        # 把手内竖排呼吸小标签
-        lbl_icon = tk.Label(self.handle_frame, text="⚡", font=("Helvetica", 11), bg="#2563eb", fg="#ffffff")
-        lbl_icon.pack(pady=(12, 4))
+        # 把手内居中的萌宠图标与微型指示
+        lbl_cat = tk.Label(self.handle_frame, text="🐱", font=("Helvetica", 14), bg=self.handle_bg, fg="#ffffff")
+        lbl_cat.pack(pady=(10, 2))
 
-        handle_text = "快\n捷\n岛"
-        lbl_txt = tk.Label(self.handle_frame, text=handle_text, font=("Helvetica", 9, "bold"),
-                           bg="#2563eb", fg="#ffffff", justify=tk.CENTER)
-        lbl_txt.pack(expand=True)
+        lbl_paw = tk.Label(self.handle_frame, text="🐾", font=("Helvetica", 10), bg=self.handle_bg, fg="#ffffff")
+        lbl_paw.pack(pady=(2, 6))
 
-        # 2. 展开后的核心快捷卡片面板
-        self.content_panel = tk.Frame(self.outer_frame, bg=self.bg_color, padx=10, pady=8)
+        # 2. 展开后的超紧凑核心快捷卡片面板
+        self.content_panel = tk.Frame(self.outer_frame, bg=self.bg_color, padx=6, pady=6)
         self.content_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
-        # 标题栏：小岛名称 + 钉住 + 隐藏/关闭
+        # 顶部标题栏：萌猫标题 + 状态小圆点 + 📌 钉住 + ✕
         header_row = tk.Frame(self.content_panel, bg=self.bg_color)
-        header_row.pack(fill=tk.X, pady=(0, 6))
+        header_row.pack(fill=tk.X, pady=(0, 4))
 
-        title_lbl = tk.Label(header_row, text="⚡ 快捷悬浮工作台", font=("Helvetica", 10, "bold"),
+        self.status_dot = tk.Label(header_row, text="●", font=("Helvetica", 10), bg=self.bg_color, fg="#dc2626")
+        self.status_dot.pack(side=tk.LEFT, padx=(0, 3))
+
+        title_lbl = tk.Label(header_row, text="妙手萌盒", font=("Helvetica", 9, "bold"),
                              bg=self.bg_color, fg=self.text_primary)
         title_lbl.pack(side=tk.LEFT)
 
-        self.btn_pin = tk.Button(
-            header_row, text="📌", font=("Helvetica", 9),
-            bg="#f1f5f9", fg=self.text_secondary, relief="flat", bd=0, cursor="hand2",
-            padx=4, pady=0, command=self._toggle_pin
-        )
-        self.btn_pin.pack(side=tk.RIGHT, padx=(4, 0))
-
         btn_hide = tk.Button(
-            header_row, text="✕", font=("Helvetica", 9, "bold"),
+            header_row, text="✕", font=("Helvetica", 8, "bold"),
             bg="#f1f5f9", fg=self.text_secondary, relief="flat", bd=0, cursor="hand2",
-            padx=4, pady=0, command=self.collapse_immediate
+            padx=3, pady=0, command=self.collapse_immediate
         )
         btn_hide.pack(side=tk.RIGHT)
 
-        # 状态指示胶囊行
-        status_row = tk.Frame(self.content_panel, bg=self.bg_color)
-        status_row.pack(fill=tk.X, pady=(0, 8))
-
-        self.status_badge = tk.Label(
-            status_row, text="🔴 未连接浏览器", font=("Helvetica", 8, "bold"),
-            bg="#fee2e2", fg="#991b1b", padx=6, pady=2, relief="flat"
+        self.btn_pin = tk.Button(
+            header_row, text="📌", font=("Helvetica", 8),
+            bg="#f1f5f9", fg=self.text_secondary, relief="flat", bd=0, cursor="hand2",
+            padx=3, pady=0, command=self._toggle_pin
         )
-        self.status_badge.pack(side=tk.LEFT)
+        self.btn_pin.pack(side=tk.RIGHT, padx=(0, 3))
 
-        btn_refresh = tk.Button(
-            status_row, text="🔄", font=("Helvetica", 8),
-            bg="#f1f5f9", fg=self.text_primary, relief="flat", bd=0, cursor="hand2",
-            padx=4, pady=1, command=self._check_browser_status_async
-        )
-        btn_refresh.pack(side=tk.RIGHT)
-
-        # 分割线
-        sep = tk.Frame(self.content_panel, bg="#e2e8f0", height=1)
-        sep.pack(fill=tk.X, pady=(0, 8))
-
-        # 快捷按钮组（6大高频操作）
+        # 5 个紧凑精致胶囊按钮
         btn_configs = [
-            ("🛒 1. 打开 1688 货源", "#f97316", "#ffffff", self._on_btn_1688),
-            ("✨ 2. 1688 数据预览采集", "#ec4899", "#ffffff", self._on_btn_preview_1688),
-            ("📊 3. 弹出 SKU 核算台", "#10b981", "#ffffff", self._on_btn_calcfee),
-            ("🚀 4. 打开妙手工作台", "#3b82f6", "#ffffff", self._on_btn_miaoshou),
-            ("▶ 5. 一键全自动批量录入", "#8b5cf6", "#ffffff", self._on_btn_auto_execute),
+            ("🛒 1. 1688 货源", "#ea580c", "#ffffff", self._on_btn_1688),
+            ("✨ 2. 素材采集", "#db2777", "#ffffff", self._on_btn_preview_1688),
+            ("📊 3. SKU 核算", "#059669", "#ffffff", self._on_btn_calcfee),
+            ("🚀 4. 打开妙手", "#2563eb", "#ffffff", self._on_btn_miaoshou),
+            ("▶ 5. 批量录入", "#7c3aed", "#ffffff", self._on_btn_auto_execute),
         ]
 
         for text, bg_c, fg_c, cmd in btn_configs:
@@ -174,34 +194,31 @@ class FloatingDock:
                 relief="flat",
                 bd=0,
                 cursor="hand2",
-                pady=6,
+                pady=4,
                 anchor="w",
                 padx=8,
                 command=cmd
             )
-            btn.pack(fill=tk.X, pady=3)
+            btn.pack(fill=tk.X, pady=2)
 
         # 底部展开主窗口按钮
-        sep2 = tk.Frame(self.content_panel, bg="#e2e8f0", height=1)
-        sep2.pack(fill=tk.X, pady=(6, 6))
-
         btn_show_main = tk.Button(
             self.content_panel,
-            text="🖥️ 展开完整控制台",
-            font=("Helvetica", 9, "bold"),
+            text="🖥️ 完整控制台",
+            font=("Helvetica", 8, "bold"),
             bg="#f1f5f9",
-            fg="#1e293b",
+            fg="#475569",
             activebackground="#e2e8f0",
             relief="flat",
             bd=0,
             cursor="hand2",
-            pady=5,
+            pady=3,
             command=self._on_show_main_window
         )
-        btn_show_main.pack(fill=tk.X)
+        btn_show_main.pack(fill=tk.X, pady=(3, 0))
 
     def _bind_events(self):
-        """绑定鼠标移入唤醒与移出延迟收起事件"""
+        """递归绑定鼠标滑过与离开事件"""
         self._bind_hover_recursive(self.root)
 
     def _bind_hover_recursive(self, widget):
@@ -211,26 +228,27 @@ class FloatingDock:
             self._bind_hover_recursive(child)
 
     def _on_mouse_enter(self, event=None):
-        """鼠标滑入：取消收起定时器并触发平滑滑出展开"""
+        """鼠标滑入：立即瞬间平滑滑出展开"""
         if self._collapse_timer:
             self.root.after_cancel(self._collapse_timer)
             self._collapse_timer = None
 
+        self._set_macos_system_topmost()
         if not self.is_expanded and not self._animating:
             self._animate_slide(target_x=self.x_expanded, on_done=lambda: setattr(self, 'is_expanded', True))
 
     def _on_mouse_leave(self, event=None):
-        """鼠标滑出：若未钉住则启动 400ms 缓冲后收起"""
+        """鼠标滑出：若未钉住则在 350ms 后收起"""
         if self.is_pinned:
             return
 
         if self._collapse_timer:
             self.root.after_cancel(self._collapse_timer)
 
-        self._collapse_timer = self.root.after(420, self._check_and_collapse)
+        self._collapse_timer = self.root.after(350, self._check_and_collapse)
 
     def _check_and_collapse(self):
-        """核查鼠标真实坐标，若已离开窗口则平滑收起"""
+        """核查鼠标坐标，若已离开窗口则平滑缩回边缘"""
         self._collapse_timer = None
         if self.is_pinned:
             return
@@ -250,7 +268,7 @@ class FloatingDock:
             self._animate_slide(target_x=self.x_collapsed, on_done=lambda: setattr(self, 'is_expanded', False))
 
     def _animate_slide(self, target_x: int, on_done: Optional[Callable] = None):
-        """丝滑步进位移动画"""
+        """轻快位移动画"""
         self._animating = True
         start_x = self.current_x
         diff = target_x - start_x
@@ -275,10 +293,10 @@ class FloatingDock:
         _step_fn()
 
     def _toggle_pin(self):
-        """切换钉住锁定状态"""
+        """切换钉住锁定"""
         self.is_pinned = not self.is_pinned
         if self.is_pinned:
-            self.btn_pin.configure(bg="#2563eb", fg="#ffffff", text="📌")
+            self.btn_pin.configure(bg="#6366f1", fg="#ffffff", text="📌")
             if not self.is_expanded:
                 self._animate_slide(target_x=self.x_expanded, on_done=lambda: setattr(self, 'is_expanded', True))
         else:
@@ -286,30 +304,20 @@ class FloatingDock:
             self._on_mouse_leave()
 
     def collapse_immediate(self):
-        """立即平滑收缩回边缘"""
+        """立即收起回边缘"""
         self.is_pinned = False
         self.btn_pin.configure(bg="#f1f5f9", fg=self.text_secondary, text="📌")
         self._animate_slide(target_x=self.x_collapsed, on_done=lambda: setattr(self, 'is_expanded', False))
 
     def _check_browser_status_async(self):
-        """后台异步检测 CDP 浏览器运行状态并刷新 Badge"""
+        """后台检测浏览器连接状态"""
         def _worker():
             ready = self.browser_mgr.is_cdp_ready()
-            tab_cnt = self.browser_mgr.get_open_tab_count() if ready else 0
-
             def _update():
                 if ready:
-                    self.status_badge.configure(
-                        text=f"🟢 浏览器已连接 ({tab_cnt}页)",
-                        bg="#dcfce7",
-                        fg="#166534"
-                    )
+                    self.status_dot.configure(fg="#16a34a")
                 else:
-                    self.status_badge.configure(
-                        text="🔴 浏览器未连接",
-                        bg="#fee2e2",
-                        fg="#991b1b"
-                    )
+                    self.status_dot.configure(fg="#dc2626")
             self.root.after(0, _update)
 
         threading.Thread(target=_worker, daemon=True).start()
@@ -363,7 +371,7 @@ class FloatingDock:
             messagebox.showinfo("提示", "请先在主控制台中选择 SKU 数据文件后执行录入！")
 
     def _on_show_main_window(self):
-        """呼出/还原主程序完整控制台窗口"""
+        """呼出主程序完整控制台窗口"""
         if self.main_app:
             try:
                 if self.main_app.root.state() in ("iconic", "withdrawn"):
@@ -378,13 +386,13 @@ class FloatingDock:
     def show(self):
         self.root.deiconify()
         self.root.lift()
+        self._set_macos_system_topmost()
 
     def hide(self):
         self.root.withdraw()
 
 
 def launch_standalone_dock():
-    """独立调试启动入口"""
     dock = FloatingDock()
     dock.root.mainloop()
 
