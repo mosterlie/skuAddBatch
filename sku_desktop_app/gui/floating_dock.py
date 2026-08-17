@@ -11,6 +11,15 @@ import threading
 import subprocess
 from typing import Optional
 
+import base64
+
+CAT_IMG_PATH = os.path.join(os.path.dirname(__file__), 'cute_cat_white_opt.png')
+if os.path.exists(CAT_IMG_PATH):
+    with open(CAT_IMG_PATH, 'rb') as _f:
+        CAT_IMG_URI = 'data:image/png;base64,' + base64.b64encode(_f.read()).decode('ascii')
+else:
+    CAT_IMG_URI = ''
+
 # ═══════════════════════════════════════════════════════════
 # HTML/CSS/JS — 高颜值三级状态悬浮岛
 # ═══════════════════════════════════════════════════════════
@@ -29,23 +38,118 @@ DOCK_HTML = r'''<!DOCTYPE html>
     -webkit-user-select: none; user-select: none;
   }
 
-  /* ═══════ 猫爪 ═══════ */
+  /* ═══════ 气泡胶囊 ═══════ */
+  .bubble {
+    position: absolute;
+    right: 80px; top: 50%;
+    transform: translateY(-50%) translateX(24px) scale(0.68);
+    opacity: 0;
+    pointer-events: none;
+    display: flex; align-items: center;
+    padding: 10px 18px;
+    white-space: nowrap;
+    border-radius: 22px;
+    background: rgba(255, 242, 246, 0.88);
+    backdrop-filter: blur(28px) saturate(200%);
+    -webkit-backdrop-filter: blur(28px) saturate(200%);
+    border: 1.5px solid rgba(255, 182, 193, 0.65);
+    box-shadow:
+      0 8px 24px rgba(251, 113, 133, 0.28),
+      0 2px 8px rgba(0,0,0,0.05),
+      inset 0 1px 0 rgba(255,255,255,0.95);
+    transition: transform 0.38s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.25s ease;
+    user-select: none;
+  }
+
+  /* 气泡小尾巴指向右边的小白猫 */
+  .bubble::after {
+    content: '';
+    position: absolute;
+    right: -8px; top: 50%;
+    transform: translateY(-50%);
+    width: 0; height: 0;
+    border-top: 7px solid transparent;
+    border-bottom: 7px solid transparent;
+    border-left: 9px solid rgba(255, 242, 246, 0.88);
+  }
+
+  .bubble-text {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: #4a1d2e;
+    display: flex; align-items: center; gap: 4px;
+    text-shadow: 0 1px 1px rgba(255,255,255,0.8);
+  }
+
+  .bubble-name {
+    color: #e11d48;
+    font-weight: 800;
+  }
+
+  .bubble-spark {
+    color: #f59e0b;
+    font-size: 13px;
+    animation: sparklePulse 1.6s ease-in-out infinite;
+  }
+  @keyframes sparklePulse {
+    0%, 100% { transform: scale(1); opacity: 0.7; }
+    50% { transform: scale(1.25); opacity: 1; filter: drop-shadow(0 0 4px #fbbf24); }
+  }
+
+  .heart-particle {
+    position: absolute;
+    font-size: 11px;
+    opacity: 0;
+    pointer-events: none;
+    animation: floatHeart 2.2s ease-in-out infinite;
+  }
+  .h1 { top: -10px; left: 16px; animation-delay: 0s; }
+  .h2 { bottom: -9px; right: 28px; animation-delay: 0.7s; }
+  .h3 { top: -9px; right: 48px; animation-delay: 1.4s; }
+
+  @keyframes floatHeart {
+    0% { transform: translateY(4px) scale(0.6); opacity: 0; }
+    50% { opacity: 0.85; transform: translateY(-4px) scale(1.1); }
+    100% { transform: translateY(-12px) scale(0.7); opacity: 0; }
+  }
+
+  /* 悬停与激活态 */
+  #paw-view:hover .bubble, #paw-view.hovered .bubble {
+    opacity: 1;
+    transform: translateY(-50%) translateX(0) scale(1);
+    pointer-events: auto;
+  }
+
+  /* ═══════ 小白猫 ═══════ */
   #paw-view {
     position: absolute;
-    right: 0; top: 50%; transform: translateY(-50%) translateX(32px);
-    width: 52px; height: 58px;
+    right: 0; top: 50%;
+    transform: translateY(-50%);
+    width: 330px;
+    height: 96px;
+    display: flex; align-items: center; justify-content: flex-end;
     cursor: grab;
-    opacity: 0.2;
-    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-    filter: drop-shadow(-2px 2px 6px rgba(139,92,246,0.3));
+    user-select: none;
   }
   #paw-view:active {
     cursor: grabbing;
   }
-  #paw-view:hover, #paw-view.hovered {
-    transform: translateY(-50%) translateX(-8px) scale(1.12);
+
+  .cat-img {
+    width: 76px; height: 96px;
+    object-fit: contain;
+    opacity: 0.35;
+    transform: translateX(42px);
+    transition: all 0.32s cubic-bezier(0.16, 1, 0.3, 1);
+    filter: drop-shadow(-3px 3px 8px rgba(251,113,133,0.3));
+    flex-shrink: 0;
+  }
+
+  #paw-view:hover .cat-img, #paw-view.hovered .cat-img {
+    transform: translateX(-2px) scale(1.06) rotate(-2deg);
     opacity: 1.0;
-    filter: drop-shadow(-5px 4px 12px rgba(139,92,246,0.5));
+    filter: drop-shadow(-5px 5px 14px rgba(251,113,133,0.55));
   }
 
   /* ═══════ 卡片 ═══════ */
@@ -155,20 +259,18 @@ DOCK_HTML = r'''<!DOCTYPE html>
 <body>
 
 <div id="paw-view">
-  <svg viewBox="0 0 52 58" xmlns="http://www.w3.org/2000/svg">
-    <ellipse cx="28" cy="29" rx="19" ry="24" fill="#fff8f0" stroke="#f0e0d0" stroke-width="0.6"/>
-    <ellipse cx="26" cy="30" rx="9" ry="7.5" fill="#fb7185"/>
-    <ellipse cx="23" cy="27" rx="3.5" ry="2" fill="rgba(255,190,200,0.5)"/>
-    <ellipse cx="17" cy="13" rx="5.5" ry="6" fill="#fb7185"/>
-    <ellipse cx="11.5" cy="22" rx="5" ry="5.5" fill="#fb7185"/>
-    <ellipse cx="11.5" cy="36" rx="5" ry="5.5" fill="#fb7185"/>
-    <ellipse cx="17" cy="45" rx="5.5" ry="6" fill="#fb7185"/>
-    <ellipse cx="15" cy="11" rx="2.2" ry="1.5" fill="rgba(255,210,220,0.6)"/>
-    <ellipse cx="10" cy="20" rx="2" ry="1.3" fill="rgba(255,210,220,0.6)"/>
-    <ellipse cx="10" cy="34" rx="2" ry="1.3" fill="rgba(255,210,220,0.6)"/>
-    <ellipse cx="15" cy="43" rx="2.2" ry="1.5" fill="rgba(255,210,220,0.6)"/>
-    <rect x="38" y="17" width="14" height="24" rx="6" fill="#faf4ea"/>
-  </svg>
+  <div id="bubble-tip" class="bubble">
+    <span class="heart-particle h1">💖</span>
+    <span class="heart-particle h2">🌸</span>
+    <span class="heart-particle h3">✨</span>
+    <span class="bubble-text">
+      <span>🐾</span>
+      <span class="bubble-name">小白：</span>
+      <span>喵～ 宝宝辛苦啦！</span>
+      <span class="bubble-spark">✨</span>
+    </span>
+  </div>
+  <img class="cat-img" src="__CAT_IMG_URI__" alt="小白" />
 </div>
 
 <div id="card-view" class="hidden">
@@ -396,16 +498,16 @@ class DockAPI:
         # Ensure we have initial paw coordinates
         if not hasattr(self, '_paw_x'):
             sw, sh = _get_screen_size()
-            self._paw_x = sw - 64
-            self._paw_y = sh // 2 - 35
+            self._paw_x = sw - 330
+            self._paw_y = sh // 2 - 48
 
         try:
             if state == 'paw':
-                win.resize(64, 70)
+                win.resize(330, 96)
                 win.move(self._paw_x, self._paw_y)
             else:
-                card_x = self._paw_x - 196
-                card_y = self._paw_y - 230
+                card_x = self._paw_x + 70
+                card_y = self._paw_y - 219
                 win.resize(260, 535)
                 win.move(card_x, card_y)
                 try:
@@ -480,11 +582,13 @@ def _run_dock_process(parent_pid=None):
     wh = {}
     api = DockAPI(wh)
 
+    html_content = DOCK_HTML.replace('__CAT_IMG_URI__', CAT_IMG_URI)
+
     win = webview.create_window(
         '',
-        html=DOCK_HTML,
-        width=64, height=70,
-        x=sw - 64, y=sh // 2 - 35,
+        html=html_content,
+        width=330, height=96,
+        x=sw - 330, y=sh // 2 - 48,
         resizable=False,
         frameless=True,
         transparent=True,
