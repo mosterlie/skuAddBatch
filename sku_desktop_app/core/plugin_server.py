@@ -905,21 +905,6 @@ class PluginServerHandler(BaseHTTPRequestHandler):
             subprocess.Popen(["xdg-open", target_product_dir])
 
         self.wfile.write(json.dumps({"success": True, "path": target_product_dir}).encode("utf-8"))
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.end_headers()
-
-        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-        export_dir = os.path.join(base_dir, "sku_data_exports")
-        os.makedirs(export_dir, exist_ok=True)
-
-        if sys.platform == "darwin":
-            subprocess.Popen(["open", export_dir])
-        elif sys.platform == "win32":
-            os.startfile(export_dir)
-        else:
-            subprocess.Popen(["xdg-open", export_dir])
-
-        self.wfile.write(json.dumps({"success": True, "path": export_dir}).encode("utf-8"))
 
     def log_message(self, format, *args):
         pass

@@ -5,6 +5,7 @@ import os
 import sys
 import time
 import threading
+import subprocess
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from typing import Optional, List
@@ -56,6 +57,9 @@ class SkuAppGUI:
         # 启动后自动检查一次浏览器状态与初始化边缘悬浮岛
         self.root.after(500, self._async_refresh_browser_status)
         self.root.after(1000, self._init_floating_dock)
+
+        # 绑定窗口关闭事件，确保退出时同步清理子进程
+        self.root.protocol("WM_DELETE_WINDOW", self._on_app_close)
 
     def _setup_styles(self):
         """配置现代化主题样式"""
@@ -221,8 +225,12 @@ class SkuAppGUI:
             self._on_open_sku_calc()
         elif action == 'miaoshou':
             self._on_launch_browser()
+        elif action == 'collect':
+            self._on_open_miaoshou_collect()
         elif action == 'batch':
-            self._on_start_execution()
+            self._on_run_all()
+        elif action == 'open_dir':
+            self._on_open_export_dir()
         elif action == 'main':
             try:
                 if self.root.state() in ("iconic", "withdrawn"):
@@ -238,6 +246,7 @@ class SkuAppGUI:
         if not self.floating_dock:
             try:
                 self.floating_dock = FloatingDock(master=self.root, main_app=self, browser_mgr=self.browser_mgr)
+                self.floating_dock.show()
             except Exception:
                 pass
 
@@ -248,6 +257,18 @@ class SkuAppGUI:
             self.floating_dock.show()
             self.root.iconify()
             self.append_log("⚡ 已唤出屏幕边缘快捷悬浮岛，鼠标移动到屏幕右侧把手即可唤醒快捷操作！", "info")
+
+    def _on_app_close(self):
+        """主窗口关闭时优雅退出并同步终止悬浮岛子进程"""
+        try:
+            if self.floating_dock:
+                self.floating_dock.hide()
+        except Exception:
+            pass
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
 
     def _build_collect_tab(self, parent):
         """构建【商品采集】菜单页面"""
@@ -1300,7 +1321,14 @@ def start_app():
             pass
 
     app = SkuAppGUI(root)
-    root.mainloop()
+    try:
+        root.mainloop()
+    finally:
+        if app.floating_dock:
+            try:
+                app.floating_dock.hide()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

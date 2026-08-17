@@ -5,7 +5,7 @@ a = Analysis(
     ['sku_desktop_app/main.py'],
     pathex=[],
     binaries=[],
-    datas=[('sku_desktop_app/gui', 'sku_desktop_app/gui'), ('sku_desktop_app/core', 'sku_desktop_app/core'), ('sku_desktop_app/config.py', 'sku_desktop_app'), ('sku_desktop_app/main.py', 'sku_desktop_app')],
+    datas=[('sku_desktop_app/gui', 'sku_desktop_app/gui'), ('sku_desktop_app/core', 'sku_desktop_app/core'), ('sku_desktop_app/web', 'sku_desktop_app/web'), ('sku_desktop_app/assets', 'sku_desktop_app/assets'), ('sku_desktop_app/config.py', 'sku_desktop_app'), ('sku_desktop_app/main.py', 'sku_desktop_app')],
     hiddenimports=['PIL', 'PIL._tkinter_finder', 'tkinter'],
     hookspath=[],
     hooksconfig={},

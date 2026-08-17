@@ -14,7 +14,7 @@ from gui.app_window import start_app
 
 
 def main():
-    if len(sys.argv) > 1 and sys.argv[1] == "--dock":
+    if "--dock" in sys.argv:
         from gui.floating_dock import launch_standalone_dock
         launch_standalone_dock()
         return

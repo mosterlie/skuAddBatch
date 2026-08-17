@@ -32,68 +32,27 @@ DOCK_HTML = r'''<!DOCTYPE html>
   /* ═══════ 猫爪 ═══════ */
   #paw-view {
     position: absolute;
-    right: 0; top: 50%; transform: translateY(-50%);
+    right: 0; top: 50%; transform: translateY(-50%) translateX(32px);
     width: 52px; height: 58px;
-    cursor: pointer;
+    cursor: grab;
+    opacity: 0.2;
     transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
     filter: drop-shadow(-2px 2px 6px rgba(139,92,246,0.3));
   }
-  #paw-view:hover {
+  #paw-view:active {
+    cursor: grabbing;
+  }
+  #paw-view:hover, #paw-view.hovered {
     transform: translateY(-50%) translateX(-8px) scale(1.12);
+    opacity: 1.0;
     filter: drop-shadow(-5px 4px 12px rgba(139,92,246,0.5));
   }
-
-  /* ═══════ 水晶球 ═══════ */
-  #orb-view {
-    position: absolute;
-    right: 6px; top: 50%; transform: translateY(-50%);
-    width: 58px; height: 58px;
-    cursor: pointer;
-    display: none;
-    animation: orbIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-  @keyframes orbIn {
-    from { opacity: 0; transform: translateY(-50%) translateX(24px) scale(0.6); }
-    to   { opacity: 1; transform: translateY(-50%) translateX(0) scale(1); }
-  }
-  .orb {
-    width: 58px; height: 58px;
-    border-radius: 50%;
-    background: radial-gradient(circle at 32% 32%, #d8b4fe, #a855f7 35%, #7c3aed 65%, #6d28d9);
-    box-shadow:
-      0 0 24px rgba(139, 92, 246, 0.55),
-      0 0 48px rgba(139, 92, 246, 0.2),
-      inset 0 -4px 8px rgba(0,0,0,0.12),
-      inset 0 4px 8px rgba(255,255,255,0.25);
-    display: flex; align-items: center; justify-content: center;
-    position: relative;
-    transition: all 0.25s ease;
-    animation: orbPulse 2.5s ease-in-out infinite;
-  }
-  @keyframes orbPulse {
-    0%, 100% { box-shadow: 0 0 24px rgba(139,92,246,0.55), 0 0 48px rgba(139,92,246,0.2), inset 0 -4px 8px rgba(0,0,0,0.12), inset 0 4px 8px rgba(255,255,255,0.25); }
-    50%      { box-shadow: 0 0 32px rgba(139,92,246,0.7), 0 0 64px rgba(139,92,246,0.3), inset 0 -4px 8px rgba(0,0,0,0.12), inset 0 4px 8px rgba(255,255,255,0.25); }
-  }
-  .orb:hover {
-    transform: scale(1.15);
-    box-shadow: 0 0 36px rgba(139,92,246,0.8), 0 0 72px rgba(139,92,246,0.35);
-  }
-  .orb::before {
-    content: '';
-    position: absolute; top: 7px; left: 12px;
-    width: 26px; height: 12px;
-    background: rgba(255,255,255,0.3);
-    border-radius: 50%;
-    transform: rotate(-18deg);
-  }
-  .orb-face { font-size: 28px; margin-top: 2px; filter: drop-shadow(0 1px 3px rgba(0,0,0,0.2)); }
 
   /* ═══════ 卡片 ═══════ */
   #card-view {
     position: absolute;
     right: 12px; top: 50%; transform: translateY(-50%);
     width: 232px;
-    display: none;
     animation: cardIn 0.4s cubic-bezier(0.16, 1, 0.3, 1);
   }
   @keyframes cardIn {
@@ -173,9 +132,11 @@ DOCK_HTML = r'''<!DOCTYPE html>
 
   .c1 { background: linear-gradient(135deg, #fb923c, #ea580c); --sh: rgba(249,115,22,0.4); }
   .c2 { background: linear-gradient(135deg, #fb7185, #e11d48); --sh: rgba(244,63,94,0.4); }
-  .c3 { background: linear-gradient(135deg, #4ade80, #16a34a); --sh: rgba(34,197,94,0.4); }
-  .c4 { background: linear-gradient(135deg, #60a5fa, #2563eb); --sh: rgba(59,130,246,0.4); }
-  .c5 { background: linear-gradient(135deg, #c084fc, #9333ea); --sh: rgba(168,85,247,0.4); }
+  .c3 { background: linear-gradient(135deg, #38bdf8, #0284c7); --sh: rgba(2,132,199,0.4); }
+  .c4 { background: linear-gradient(135deg, #4ade80, #16a34a); --sh: rgba(34,197,94,0.4); }
+  .c5 { background: linear-gradient(135deg, #60a5fa, #2563eb); --sh: rgba(59,130,246,0.4); }
+  .c6 { background: linear-gradient(135deg, #c084fc, #9333ea); --sh: rgba(168,85,247,0.4); }
+  .c7 { background: linear-gradient(135deg, #14b8a6, #0d9488); --sh: rgba(20,184,166,0.4); }
 
   .fb {
     display: flex; align-items: center; justify-content: center;
@@ -193,7 +154,7 @@ DOCK_HTML = r'''<!DOCTYPE html>
 </head>
 <body>
 
-<div id="paw-view" onclick="showOrb()">
+<div id="paw-view">
   <svg viewBox="0 0 52 58" xmlns="http://www.w3.org/2000/svg">
     <ellipse cx="28" cy="29" rx="19" ry="24" fill="#fff8f0" stroke="#f0e0d0" stroke-width="0.6"/>
     <ellipse cx="26" cy="30" rx="9" ry="7.5" fill="#fb7185"/>
@@ -210,10 +171,6 @@ DOCK_HTML = r'''<!DOCTYPE html>
   </svg>
 </div>
 
-<div id="orb-view" class="hidden" onclick="showCard()">
-  <div class="orb"><span class="orb-face">🐱</span></div>
-</div>
-
 <div id="card-view" class="hidden">
   <div class="card">
     <div class="header">
@@ -226,16 +183,17 @@ DOCK_HTML = r'''<!DOCTYPE html>
         </div>
       </div>
       <div class="hdr-actions">
-        <button class="hdr-btn" id="bPin" onclick="togglePin()" title="钉住">📌</button>
-        <button class="hdr-btn" onclick="doClose()" title="收起">✕</button>
+        <button class="hdr-btn" onclick="doClose()" title="收起面板">✕</button>
       </div>
     </div>
     <div class="btns">
       <button class="ab c1" onclick="sendCmd('1688')"><span class="ic">🔍</span> 1688 货源直达</button>
       <button class="ab c2" onclick="sendCmd('preview')"><span class="ic">📸</span> 1688 素材采集</button>
-      <button class="ab c3" onclick="sendCmd('calc')"><span class="ic">📊</span> SKU 智能核算</button>
-      <button class="ab c4" onclick="sendCmd('miaoshou')"><span class="ic">🔑</span> 妙手免密直达</button>
-      <button class="ab c5" onclick="sendCmd('batch')"><span class="ic">📦</span> 一键批量录入</button>
+      <button class="ab c3" onclick="sendCmd('collect')"><span class="ic">📥</span> 打开妙手采集箱</button>
+      <button class="ab c4" onclick="sendCmd('calc')"><span class="ic">📊</span> SKU 智能核算</button>
+      <button class="ab c5" onclick="sendCmd('miaoshou')"><span class="ic">🔑</span> 妙手免密直达</button>
+      <button class="ab c6" onclick="sendCmd('batch')"><span class="ic">📦</span> 一键批量录入</button>
+      <button class="ab c7" onclick="sendCmd('open_dir')"><span class="ic">📂</span> 打开操作目录</button>
     </div>
     <button class="fb" onclick="sendCmd('main')">🖥️ 展开完整控制台</button>
   </div>
@@ -243,11 +201,84 @@ DOCK_HTML = r'''<!DOCTYPE html>
 
 <script>
 let st='paw', pinned=false, outCnt=0;
+let isMouseDown = false;
+let hasMoved = false;
+let startX = 0, startY = 0;
+let lastDragTime = 0;
+
+const paw = document.getElementById('paw-view');
+
+paw.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return;
+  isMouseDown = true;
+  hasMoved = false;
+  startX = e.screenX;
+  startY = e.screenY;
+  
+  try {
+    if (window.pywebview && window.pywebview.api) {
+      pywebview.api.start_drag(startX, startY);
+    }
+  } catch(err) {}
+});
+
+document.addEventListener('mousemove', (e) => {
+  if (!isMouseDown) return;
+  
+  const dx = e.screenX - startX;
+  const dy = e.screenY - startY;
+  
+  if (!hasMoved && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
+    hasMoved = true;
+  }
+  
+  if (hasMoved) {
+    const now = performance.now();
+    if (now - lastDragTime > 30) {
+      lastDragTime = now;
+      try {
+        if (window.pywebview && window.pywebview.api) {
+          pywebview.api.drag(e.screenX, e.screenY);
+        }
+      } catch(err) {}
+    }
+  }
+});
+
+function resetDragState() {
+  if (isMouseDown) {
+    isMouseDown = false;
+    try {
+      if (window.pywebview && window.pywebview.api) {
+        pywebview.api.stop_drag();
+      }
+    } catch(err) {}
+  }
+}
+
+document.addEventListener('mouseup', (e) => {
+  const moved = hasMoved;
+  resetDragState();
+  if (!moved && st === 'paw') {
+    showCard();
+  }
+});
+
+paw.addEventListener('click', (e) => {
+  if (!hasMoved && st === 'paw') {
+    showCard();
+  }
+  hasMoved = false;
+});
+
+window.addEventListener('blur', resetDragState);
 
 function callResize(state) {
-  if (window.pywebview && window.pywebview.api) {
-    pywebview.api.sz(state);
-  }
+  try {
+    if (window.pywebview && window.pywebview.api) {
+      pywebview.api.sz(state);
+    }
+  } catch(err) {}
 }
 
 function sendCmd(action) {
@@ -256,48 +287,52 @@ function sendCmd(action) {
 }
 
 function showPaw() {
-  st='paw'; outCnt=0;
-  document.getElementById('paw-view').classList.remove('hidden');
-  document.getElementById('orb-view').classList.add('hidden');
+  st = 'paw';
+  isMouseDown = false;
+  hasMoved = false;
+  const paw = document.getElementById('paw-view');
+  paw.classList.remove('hovered');
+  paw.classList.remove('hidden');
   document.getElementById('card-view').classList.add('hidden');
   callResize('paw');
 }
-function showOrb() {
-  st='orb'; outCnt=0;
-  document.getElementById('paw-view').classList.add('hidden');
-  document.getElementById('orb-view').classList.remove('hidden');
-  document.getElementById('card-view').classList.add('hidden');
-  callResize('orb');
-}
+
 function showCard() {
-  st='card'; outCnt=0;
-  document.getElementById('paw-view').classList.add('hidden');
-  document.getElementById('orb-view').classList.add('hidden');
+  st = 'card';
+  isMouseDown = false;
+  hasMoved = false;
+  const paw = document.getElementById('paw-view');
+  paw.classList.remove('hovered');
+  paw.classList.add('hidden');
   document.getElementById('card-view').classList.remove('hidden');
   callResize('card');
 }
-function doClose() { showPaw(); }
-function togglePin() {
-  pinned=!pinned;
-  document.getElementById('bPin').classList.toggle('pinned', pinned);
-  if (window.pywebview && window.pywebview.api) {
-    pywebview.api.set_pin(pinned);
+
+function setHover(hover) {
+  if (st === 'paw') {
+    const paw = document.getElementById('paw-view');
+    if (hover) {
+      paw.classList.add('hovered');
+    } else {
+      paw.classList.remove('hovered');
+      isMouseDown = false;
+      hasMoved = false;
+    }
   }
 }
 
-document.addEventListener('mouseleave', function() {
-  if (st==='orb' || (st==='card' && !pinned)) {
-    outCnt++;
-    if (outCnt >= 2) { outCnt=0; showPaw(); }
-  }
-});
-document.addEventListener('mouseenter', function() {
-  outCnt=0;
-  if (st==='paw') showOrb();
-});
-document.addEventListener('keydown', function(e) { if (e.key==='Escape') showPaw(); });
+function doClose() { showPaw(); }
 
-window.addEventListener('pywebviewready', function() { pywebview.api.ready(); });
+document.addEventListener('mouseenter', function() {
+  outCnt = 0;
+});
+document.addEventListener('keydown', function(e) { if (e.key === 'Escape') showPaw(); });
+
+window.addEventListener('pywebviewready', function() { 
+  try {
+    pywebview.api.ready(); 
+  } catch(err) {}
+});
 </script>
 </body>
 </html>'''
@@ -321,25 +356,64 @@ class DockAPI:
     def __init__(self, window_holder):
         self._wh = window_holder
         self._pinned = False
+        self._current_state = 'paw'
 
     def ready(self):
         pass
 
+    def start_drag(self, sx, sy):
+        self._drag_start_sx = sx
+        self._drag_start_sy = sy
+        win = self._wh.get('win')
+        if win:
+            self._drag_start_wx = win.x
+            self._drag_start_wy = win.y
+
+    def drag(self, sx, sy):
+        win = self._wh.get('win')
+        if win and hasattr(self, '_drag_start_wx'):
+            dx = sx - self._drag_start_sx
+            dy = sy - self._drag_start_sy
+            new_x = int(self._drag_start_wx + dx)
+            new_y = int(self._drag_start_wy + dy)
+            try:
+                win.move(new_x, new_y)
+                self._paw_x = new_x
+                self._paw_y = new_y
+            except Exception:
+                pass
+
+    def stop_drag(self):
+        if hasattr(self, '_drag_start_wx'):
+            delattr(self, '_drag_start_wx')
+
     def sz(self, state):
-        sw, sh = _get_screen_size()
+        self._current_state = state
         win = self._wh.get('win')
         if not win:
             return
+        
+        # Ensure we have initial paw coordinates
+        if not hasattr(self, '_paw_x'):
+            sw, sh = _get_screen_size()
+            self._paw_x = sw - 64
+            self._paw_y = sh // 2 - 35
+
         try:
             if state == 'paw':
                 win.resize(64, 70)
-                win.move(sw - 64, sh // 2 - 35)
-            elif state == 'orb':
-                win.resize(72, 72)
-                win.move(sw - 72, sh // 2 - 36)
+                win.move(self._paw_x, self._paw_y)
             else:
-                win.resize(260, 430)
-                win.move(sw - 268, sh // 2 - 215)
+                card_x = self._paw_x - 196
+                card_y = self._paw_y - 230
+                win.resize(260, 535)
+                win.move(card_x, card_y)
+                try:
+                    import AppKit
+                    for w in AppKit.NSApp.windows():
+                        w.makeKeyAndOrderFront_(None)
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -359,9 +433,48 @@ class DockAPI:
             pass
 
 
-def _run_dock_process():
+def _run_dock_process(parent_pid=None):
     """在独立进程/主线程中运行 pywebview 悬浮岛"""
     import webview
+
+    # 启动父进程看门狗守护线程：一旦主程序关闭或被终止，悬浮窗在 0.5s 内感知并同步退出
+    if parent_pid is None:
+        try:
+            ppid = os.getppid()
+            if ppid > 1:
+                parent_pid = ppid
+        except Exception:
+            pass
+
+    if parent_pid:
+        def _parent_watchdog():
+            while True:
+                time.sleep(0.5)
+                try:
+                    os.kill(parent_pid, 0)
+                except (ProcessLookupError, OSError):
+                    os._exit(0)
+                except Exception:
+                    pass
+
+        threading.Thread(target=_parent_watchdog, daemon=True, name="ParentWatchdog").start()
+
+    # 针对 macOS Cocoa 底层注入 First Mouse (跨应用首次点击穿透响应)
+    try:
+        import AppKit, WebKit, objc
+        import webview.platforms.cocoa as c
+
+        class NSView(objc.Category(AppKit.NSView)):
+            def acceptsFirstMouse_(self, event):
+                return True
+
+        class WKWebView(objc.Category(WebKit.WKWebView)):
+            def acceptsFirstMouse_(self, event):
+                return True
+
+        c.BrowserView.WebKitHost.acceptsFirstMouse_ = lambda self, event: True
+    except Exception as e:
+        print(f"First mouse swizzle error: {e}", flush=True)
 
     sw, sh = _get_screen_size()
     wh = {}
@@ -381,10 +494,15 @@ def _run_dock_process():
     wh['win'] = win
 
     def _on_shown():
+        print("Subprocess window shown!", flush=True)
         time.sleep(0.3)
         try:
             import AppKit
+            # Transform subprocess to accessory application so it displays and registers clicks/hovers
+            AppKit.NSApp.setActivationPolicy_(AppKit.NSApplicationActivationPolicyAccessory)
+            
             for w in AppKit.NSApp.windows():
+                w.setAcceptsMouseMovedEvents_(True)
                 w.setLevel_(AppKit.NSStatusWindowLevel)
                 w.setCollectionBehavior_(
                     AppKit.NSWindowCollectionBehaviorCanJoinAllSpaces |
@@ -392,8 +510,9 @@ def _run_dock_process():
                     AppKit.NSWindowCollectionBehaviorStationary
                 )
                 w.setHidesOnDeactivate_(False)
-        except Exception:
-            pass
+            print("Accessory activation policy set successfully", flush=True)
+        except Exception as e:
+            print(f"Error in _on_shown: {e}", flush=True)
 
     def _topmost_keeper():
         while True:
@@ -406,8 +525,33 @@ def _run_dock_process():
             except Exception:
                 pass
 
+    def _global_mouse_tracker():
+        is_hovered = False
+        while True:
+            time.sleep(0.06)
+            try:
+                if getattr(api, '_current_state', 'paw') == 'card':
+                    continue
+                import AppKit
+                pt = AppKit.NSEvent.mouseLocation()
+                windows = AppKit.NSApp.windows()
+                if not windows:
+                    continue
+                w = windows[0]
+                frame = w.frame()
+                inside = bool(AppKit.NSPointInRect(pt, frame))
+                if inside != is_hovered:
+                    is_hovered = inside
+                    if inside:
+                        win.evaluate_js('setHover(true);')
+                    else:
+                        win.evaluate_js('setHover(false);')
+            except Exception:
+                pass
+
     win.events.shown += _on_shown
     threading.Thread(target=_topmost_keeper, daemon=True).start()
+    threading.Thread(target=_global_mouse_tracker, daemon=True, name="GlobalMouseTracker").start()
 
     webview.start(debug=False)
 
@@ -421,32 +565,48 @@ class FloatingDock:
         self.main_app = main_app
         self.browser_mgr = browser_mgr or (main_app.browser_mgr if main_app else None)
         self._process = None
+        import atexit
+        atexit.register(self.hide)
 
     def show(self):
-        """启动悬浮岛子进程"""
+        """启动悬浮岛子进程并传入当前主程序 PID"""
         if self._process and self._process.poll() is None:
             return
 
         import sys
         current_dir = os.path.dirname(os.path.abspath(__file__))
         dock_script = os.path.join(current_dir, "floating_dock.py")
+        parent_pid = str(os.getpid())
 
         if getattr(sys, 'frozen', False):
             # 运行打包好的可执行文件并传入 --dock
-            cmd_args = [sys.executable, "--dock"]
+            cmd_args = [sys.executable, "--dock", "--parent-pid", parent_pid]
         else:
             # 源码运行
-            cmd_args = [sys.executable, dock_script]
+            cmd_args = [sys.executable, dock_script, "--parent-pid", parent_pid]
 
-        self._process = subprocess.Popen(
-            cmd_args,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
+        try:
+            self._process = subprocess.Popen(
+                cmd_args,
+                stdout=open('/Users/gx/Desktop/mypro/skuAddBatch/dock_sub.log', 'w'),
+                stderr=subprocess.STDOUT
+            )
+        except Exception as e:
+            with open('/Users/gx/Desktop/mypro/skuAddBatch/dock_sub.log', 'a') as f:
+                f.write(f"Launch exception: {e}\n")
 
     def hide(self):
+        """完全终止并退出悬浮岛子进程"""
         if self._process and self._process.poll() is None:
-            self._process.terminate()
+            try:
+                self._process.terminate()
+                self._process.wait(timeout=1.0)
+            except Exception:
+                try:
+                    self._process.kill()
+                except Exception:
+                    pass
+            self._process = None
 
     def collapse_immediate(self):
         pass
@@ -454,7 +614,14 @@ class FloatingDock:
 
 def launch_standalone_dock():
     """独立模式启动"""
-    _run_dock_process()
+    parent_pid = None
+    if "--parent-pid" in sys.argv:
+        try:
+            idx = sys.argv.index("--parent-pid")
+            parent_pid = int(sys.argv[idx + 1])
+        except (ValueError, IndexError):
+            pass
+    _run_dock_process(parent_pid=parent_pid)
 
 
 if __name__ == "__main__":
