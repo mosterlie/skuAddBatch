@@ -562,55 +562,83 @@ class SkuExecutor:
             return False
 
     # =========================================================================
-    # 步骤 4：批量并行上传 SKU 变体图片
     # =========================================================================
+    # 步骤 4：批量并行上传 SKU 变体图片 (支持虚拟表格自动滚动扫描)
+    # =========================================================================
+    def _get_picture_table_rows(self) -> List[Locator]:
+        """严格在规格图片表格区域内获取当前可见行，绝不混淆下方价格库存表格"""
+        selectors = [
+            ".picture-table-list .pro-virtual-table__row",
+            ".picture-table-list tbody tr",
+            ".picture-table-list tr",
+            ".sale-attribute-list tbody tr",
+            ".sale-attribute-list tr",
+            "[class*='picture-table'] tr",
+        ]
+        for sel in selectors:
+            loc = self.page.locator(sel)
+            if loc.count() > 0:
+                return loc.all()
+        return self.page.locator(".picture-table-list tr, .sale-attribute-list tr").all()
+
+    def _scroll_picture_table_down(self) -> bool:
+        """向下滚动图片列表容器"""
+        js = """
+        () => {
+            const rows = document.querySelectorAll('.picture-table-list .pro-virtual-table__row, .picture-table-list tbody tr, .picture-table-list tr');
+            if (!rows || rows.length === 0) return false;
+            
+            let el = rows[0];
+            let container = null;
+            while (el && el !== document.body) {
+                const style = window.getComputedStyle(el);
+                if ((el.scrollHeight > el.clientHeight + 2) && 
+                    (style.overflowY === 'auto' || style.overflowY === 'scroll' || style.overflowY === 'overlay')) {
+                    container = el;
+                    break;
+                }
+                el = el.parentElement;
+            }
+            
+            if (!container) return false;
+            const prev = container.scrollTop;
+            container.scrollTop += 250;
+            container.dispatchEvent(new Event('scroll', { bubbles: true }));
+            return container.scrollTop > prev;
+        }
+        """
+        try:
+            return bool(self.page.evaluate(js))
+        except Exception:
+            return False
+
     def upload_sku_images(self) -> int:
         """
-        并行模式：预扫描一次性匹配所有行 -> 行内 input 批量直注(零等待，浏览器内部并行上传)
-        -> 弹层流水线兜底 -> 统一轮询验证。受单线程 Playwright 调度架构约束，"并行"体现为：
-        文件注入快速串行 (每次 <100ms)，HTTP 上传请求由浏览器并发发出，不再逐行固定 sleep。
+        批量并行上传 SKU 变体图片 (支持虚拟表格自动滚动扫描与多屏注入)
         """
         self._check_cancelled()
         total = len(self.bundle.items)
-        self.log(f"正在执行【步骤 4/4 前置】：SKU 变体图片批量并行上传 (共 {total} 个)...", "info")
+        self.log(f"正在执行【步骤 4/4 前置】：SKU 变体图片批量上传 (共 {total} 个)...", "info")
 
-        # ------------------------------------------------------------------
-        # 1. 预扫描：一次性抓取所有行，建立 SkuItem -> 行 的映射
-        # ------------------------------------------------------------------
-        rows = self.page.locator(".picture-table-list .pro-virtual-table__row, .sale-attribute-list tr, .picture-table-list tr").all()
-        matched: Dict[SkuItem, Locator] = {}
+        injected: Set[SkuItem] = set()
+
+        # 首先将图片表格与页面滚到最顶部
+        self._scroll_table_to_top()
+
         for item in self.bundle.items:
+            self._check_cancelled()
             if not item.image_full_path or not os.path.exists(item.image_full_path):
                 self.log(f"SKU [{item.color}-{item.size}] 图片不存在: {item.image_name}，跳过", "warn")
                 continue
-            for r in rows:
-                try:
-                    text = r.inner_text()
-                except Exception:
-                    continue
-                if item.color in text and (not item.size or item.size in text):
-                    matched[item] = r
-                    break
-            else:
+
+            target_row = self._find_target_row_for_item(item, max_scroll=8)
+
+            if target_row is None:
                 self.log(f"未能找到匹配 SKU [{item.color}-{item.size}] 的行，跳过", "warn")
+                continue
 
-        if not matched:
-            self.log("⚠️ 未匹配到任何 SKU 行，请确认变体维度已生成", "warn")
-            return 0
-
-        # ------------------------------------------------------------------
-        # 2. 批量上传（测试验证方案）：妙手表格行内无常驻 input，
-        #    点击列内上传按钮动态创建 -> ElementHandle 固定引用 ->
-        #    一次注入文件列表实现多图并发上传（HTTP 请求由浏览器并行发出）
-        # ------------------------------------------------------------------
-        injected: Set[SkuItem] = set()
-        for item, row in matched.items():
-            self._check_cancelled()
             try:
-                # 图片列分配：
-                # Swatch 列（"Swatch Image"列）= SKU 主图单张（第1张主图）
-                # 图库列（"图片"列）= SKU 主图(第一位) + 2detail 全部附图
-                col_gallery, col_swatch = self._classify_image_cells(row)
+                col_gallery, col_swatch = self._classify_image_cells(target_row)
                 gallery_files = self._build_sku_gallery_files(item)
 
                 swatch_ok = False
@@ -619,47 +647,75 @@ class SkuExecutor:
                 # 1. 先上传 Swatch Image 列 (主图第1张)
                 if col_swatch is not None and item.image_full_path:
                     swatch_ok = self._inject_files_via_cell_button(col_swatch, [item.image_full_path])
-                    time.sleep(0.15)  # 缓冲，避免连续点击冲突
+                    time.sleep(0.15)  # 缓冲，等待 Vue 可能的 DOM 重绘
 
                 # 2. 再上传 图库 列 (主图 + 附图)
-                if col_gallery is not None and gallery_files:
-                    gallery_ok = self._inject_files_via_cell_button(col_gallery, gallery_files)
+                if gallery_files:
+                    # 重新获取整个行，防止 swatch 上传后 DOM 刷新导致整个 target_row 失效 (Stale Element)
+                    target_row = self._find_target_row_for_item(item)
+                    if target_row is not None:
+                        try:
+                            col_gallery, _ = self._classify_image_cells(target_row)
+                        except Exception:
+                            pass
+                        
+                        if col_gallery is not None:
+                            gallery_ok = self._inject_files_via_cell_button(col_gallery, gallery_files)
 
-                if not swatch_ok and not gallery_ok:
-                    continue
+                # 如果行内直注失败，尝试弹层兜底
+                if (not swatch_ok and item.image_full_path) or (not gallery_ok and gallery_files):
+                    # 如果任一必须上传的失败了，调用兜底方法并传入状态
+                    modal_swatch, modal_gallery = self._upload_single_sku_image_via_modal(item, target_row, try_swatch=not swatch_ok, try_gallery=not gallery_ok)
+                    if modal_swatch: swatch_ok = True
+                    if modal_gallery: gallery_ok = True
 
-                injected.add(item)
-                status_desc = []
-                if swatch_ok:
-                    status_desc.append("Swatch(主图第1张)")
-                if gallery_ok:
-                    status_desc.append(f"图库({len(gallery_files)}张)")
-                self.log(f"[并行 {len(injected)}/{len(matched)}] SKU [{item.color}-{item.size}] " + " + ".join(status_desc) + f" 已注入: {item.image_name}", "info")
-                time.sleep(0.1)  # 行间轻微节流，防止服务端限流
-            except Exception:
-                continue
+                # 必须两部分(主图和swatch)应传尽传才算完全成功
+                expect_swatch = bool(item.image_full_path)
+                expect_gallery = bool(gallery_files)
+                
+                if (not expect_swatch or swatch_ok) and (not expect_gallery or gallery_ok) and (expect_swatch or expect_gallery):
+                    injected.add(item)
+                    status_desc = []
+                    if swatch_ok:
+                        status_desc.append("Swatch(主图第1张)")
+                    if gallery_ok:
+                        status_desc.append(f"图库({len(gallery_files)}张)")
+                    self.log(f"[已上传 {len(injected)}/{total}] SKU [{item.color}-{item.size}] " + " + ".join(status_desc) + f" 已注入: {item.image_name}", "info")
+                    time.sleep(0.1)
+                else:
+                    self.log(f"⚠️ SKU [{item.color}-{item.size}] 图片部分或全部注入失败", "warn")
+            except Exception as e:
+                self.log(f"SKU [{item.color}-{item.size}] 图片处理异常: {e}", "warn")
 
-        if injected:
-            self.log(f"✅ 批量直注完成 {len(injected)} 个，浏览器正在后台并行上传...", "info")
-
-        # ------------------------------------------------------------------
-        # 3. 弹层流水线兜底：无行内 input 的项，点击 -> 条件等待 -> 注入即走
-        # ------------------------------------------------------------------
-        fallback_items = [(item, row) for item, row in matched.items() if item not in injected]
-        for item, row in fallback_items:
-            self._check_cancelled()
-            if self._upload_single_sku_image_via_modal(item, row):
-                injected.add(item)
-                self.log(f"[弹层 {len(injected)}/{len(matched)}] SKU [{item.color}-{item.size}] 图片已注入: {item.image_name}", "info")
-
-        # ------------------------------------------------------------------
-        # 4. 统一验证：轮询行内缩略图渲染，替代逐行 sleep(1.0)
-        # ------------------------------------------------------------------
+        # 统一验证缩略图渲染
         self._wait_sku_images_rendered(len(injected))
 
+        # 完成后将表格滚回顶部，方便下一步骤继续扫描填表
+        self._scroll_table_to_top()
+
         success_count = len(injected)
-        self.log(f"✅ SKU 变体图片上传完毕，成功上传 {success_count}/{total} 张", "success")
+        self.log(f"✅ SKU 变体图片上传完毕，成功上传 {success_count}/{total} 个", "success")
         return success_count
+
+    def _find_target_row_for_item(self, item: SkuItem, max_scroll: int = 0) -> Optional[Locator]:
+        """寻找匹配 SKU (color+size) 的 DOM 行。如果没找到可以自动向下滚动重试。"""
+        # 为了防止传入的数据顺序与页面表格顺序不一致，先回到顶部
+        self._scroll_table_to_top()
+        time.sleep(0.15)
+        
+        for scroll_attempt in range(max_scroll + 1):
+            rows = self._get_picture_table_rows()
+            for r in rows:
+                try:
+                    text = r.inner_text()
+                except Exception:
+                    continue
+                if item.color in text and (not item.size or item.size in text):
+                    return r
+            if scroll_attempt < max_scroll:
+                self._scroll_picture_table_down()
+                time.sleep(0.25)
+        return None
 
     def _classify_image_cells(self, row: Locator) -> tuple:
         """
@@ -670,27 +726,19 @@ class SkuExecutor:
         返回 (gallery_col, swatch_col)
         """
         cells = row.locator(".pro-virtual-table__row-cell, td").all()
-        if len(cells) >= 3:
-            return cells[1], cells[2]
-        if len(cells) == 2:
-            return cells[1], None
-
+        
         gallery_col = None
         swatch_col = None
 
         for idx, cell in enumerate(cells[1:], start=1):  # 跳过首列 SKU 选项
             try:
                 text = (cell.inner_text() or "").strip().lower()
-                if "添加新图片" in text:
+                if "添加新图片" in text or "添加" in text:
                     if gallery_col is None:
                         gallery_col = cell
                 elif "swatch" in text:
                     if swatch_col is None:
                         swatch_col = cell
-                elif idx == 1 and gallery_col is None:
-                    gallery_col = cell
-                elif idx == 2 and swatch_col is None:
-                    swatch_col = cell
             except Exception:
                 continue
 
@@ -754,6 +802,38 @@ class SkuExecutor:
     }
     """
 
+    _JS_FREEZE_SCROLL = """
+    () => {
+        window.__frozen_els = [];
+        const scrollables = document.querySelectorAll('.jx-overlay-dialog, .jx-overlay, .basic-layout-app-main-container, .jx-scrollbar__wrap');
+        scrollables.forEach(el => {
+            window.__frozen_els.push({el: el, oldOverflow: el.style.getPropertyValue('overflow'), oldOverflowY: el.style.getPropertyValue('overflow-y')});
+            el.style.setProperty('overflow', 'hidden', 'important');
+            el.style.setProperty('overflow-y', 'hidden', 'important');
+        });
+    }
+    """
+
+    _JS_UNFREEZE_SCROLL = """
+    () => {
+        if (window.__frozen_els) {
+            window.__frozen_els.forEach(item => {
+                if (item.oldOverflow) {
+                    item.el.style.setProperty('overflow', item.oldOverflow);
+                } else {
+                    item.el.style.removeProperty('overflow');
+                }
+                if (item.oldOverflowY) {
+                    item.el.style.setProperty('overflow-y', item.oldOverflowY);
+                } else {
+                    item.el.style.removeProperty('overflow-y');
+                }
+            });
+            window.__frozen_els = null;
+        }
+    }
+    """
+
     def _inject_files_via_cell_button(self, cell: Locator, files: List[str]) -> bool:
         """
         点击单元格内上传按钮，捕获动态创建的 file input（ElementHandle 固定引用），
@@ -780,15 +860,17 @@ class SkuExecutor:
         if not btn:
             return False
 
-        try:
-            btn.scroll_into_view_if_needed()
-        except Exception:
-            pass
-
         prev_count = len(self.page.query_selector_all("input[type='file']"))
         try:
-            btn.click()
+            self.page.evaluate(self._JS_FREEZE_SCROLL)
+            btn.evaluate("el => el.click()")
+            time.sleep(0.1) # 稍微等待事件派发
+            self.page.evaluate(self._JS_UNFREEZE_SCROLL)
         except Exception:
+            try:
+                self.page.evaluate(self._JS_UNFREEZE_SCROLL)
+            except Exception:
+                pass
             return False
 
         inp = None
@@ -842,33 +924,41 @@ class SkuExecutor:
             return [int(t) if t.isdigit() else t.lower() for t in re.split(r'(\d+)', name)]
         return sorted(paths, key=key)
 
-    def _upload_single_sku_image_via_modal(self, item: SkuItem, target_row: Locator) -> bool:
+    def _upload_single_sku_image_via_modal(self, item: SkuItem, target_row: Locator, try_swatch: bool = True, try_gallery: bool = True) -> tuple[bool, bool]:
         """兜底路径：点击行内上传按钮捕获动态 input 后注入。
         Swatch 列注入 SKU 主图（第1张）；图库列注入 SKU 主图(第一位) + 2detail 全部图。"""
+        swatch_uploaded = False
+        gallery_uploaded = False
         try:
             col_gallery, col_swatch = self._classify_image_cells(target_row)
             gallery_files = self._build_sku_gallery_files(item)
 
-            uploaded_any = False
             # 1. Swatch 列
-            if col_swatch is not None and item.image_full_path:
+            if try_swatch and col_swatch is not None and item.image_full_path:
                 if self._inject_files_via_cell_button(col_swatch, [item.image_full_path]):
-                    uploaded_any = True
+                    swatch_uploaded = True
                     time.sleep(0.3)
                 else:
-                    self.log(f"SKU [{item.color}-{item.size}] Swatch 列未成功注入", "warn")
+                    self.log(f"SKU [{item.color}-{item.size}] Swatch 列兜底注入未成功", "warn")
 
             # 2. 图库列
-            if col_gallery is not None and gallery_files:
-                if self._inject_files_via_cell_button(col_gallery, gallery_files):
-                    uploaded_any = True
-                else:
-                    self.log(f"SKU [{item.color}-{item.size}] 图库列未成功注入", "warn")
+            if try_gallery and gallery_files:
+                target_row = self._find_target_row_for_item(item)
+                if target_row is not None:
+                    try:
+                        col_gallery, _ = self._classify_image_cells(target_row)
+                    except Exception:
+                        pass
+                    if col_gallery is not None:
+                        if self._inject_files_via_cell_button(col_gallery, gallery_files):
+                            gallery_uploaded = True
+                        else:
+                            self.log(f"SKU [{item.color}-{item.size}] 图库列兜底注入未成功", "warn")
 
-            return uploaded_any
+            return swatch_uploaded, gallery_uploaded
         except Exception as e:
-            self.log(f"上传 SKU [{item.color}-{item.size}] 图片异常: {str(e)}", "warn")
-            return False
+            self.log(f"兜底上传 SKU [{item.color}-{item.size}] 图片异常: {str(e)}", "warn")
+            return False, False
 
     # =========================================================================
     # 测试：第一个 SKU 单行多图同时上传验证
@@ -1152,7 +1242,7 @@ class SkuExecutor:
             self.log(f"填充物品状况时发生错误: {e}", "warn")
 
     def _scroll_virtual_table_down(self) -> Dict[str, Any]:
-        """向下滚动虚拟表格一行/一屏的距离"""
+        """向下滚动价格/库存虚拟表格一行/一屏的距离"""
         js_scroll = """
         () => {
             const rows = Array.from(document.querySelectorAll('.pro-virtual-table__row'));
@@ -1177,6 +1267,7 @@ class SkuExecutor:
             const prevTop = container.scrollTop;
             const scrollStep = Math.max(container.clientHeight - 80, 200);
             container.scrollTop += scrollStep;
+            container.dispatchEvent(new Event('scroll', { bubbles: true }));
             return {
                 no_scroll: false,
                 prev_top: prevTop,
@@ -1190,6 +1281,24 @@ class SkuExecutor:
             return self.page.evaluate(js_scroll)
         except Exception:
             return {"no_scroll": True}
+
+    def _scroll_table_to_top(self):
+        """将页面与所有表格滚动回顶部"""
+        js_top = """
+        () => {
+            const containers = document.querySelectorAll('.jx-scrollbar__wrap, .pro-virtual-table__body-wrapper, .vue-recycle-scroller, .picture-table-list, [class*="picture-table"]');
+            containers.forEach(el => {
+                el.scrollTop = 0;
+                el.dispatchEvent(new Event('scroll', { bubbles: true }));
+            });
+            window.scrollTo(0, 0);
+        }
+        """
+        try:
+            self.page.evaluate(js_top)
+            time.sleep(0.3)
+        except Exception:
+            pass
 
     # =========================================================================
     # 一键全自动流程

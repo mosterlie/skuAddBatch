@@ -155,58 +155,64 @@ DOCK_HTML = r'''<!DOCTYPE html>
   /* ═══════ 卡片 ═══════ */
   #card-view {
     position: absolute;
-    right: 12px; top: 50%; transform: translateY(-50%);
-    width: 232px;
-    animation: cardIn 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    right: 10px; top: 50%; transform: translateY(-50%);
+    width: 216px;
+    animation: cardIn 0.35s cubic-bezier(0.16, 1, 0.3, 1);
   }
   @keyframes cardIn {
-    from { opacity: 0; transform: translateY(-50%) translateX(50px) scale(0.88); }
+    from { opacity: 0; transform: translateY(-50%) translateX(40px) scale(0.9); }
     to   { opacity: 1; transform: translateY(-50%) translateX(0) scale(1); }
   }
   .card {
-    background: rgba(255, 255, 255, 0.80);
+    background: rgba(255, 255, 255, 0.84);
     backdrop-filter: blur(32px) saturate(200%);
     -webkit-backdrop-filter: blur(32px) saturate(200%);
-    border-radius: 24px;
+    border-radius: 16px;
     border: 1px solid rgba(192, 132, 252, 0.28);
     box-shadow:
-      0 16px 48px rgba(124, 58, 237, 0.16),
-      0 4px 16px rgba(0,0,0,0.05),
-      inset 0 1px 0 rgba(255,255,255,0.75);
-    padding: 20px 16px 16px;
+      0 10px 30px rgba(124, 58, 237, 0.15),
+      0 3px 10px rgba(0,0,0,0.04),
+      inset 0 1px 0 rgba(255,255,255,0.85);
+    padding: 10px 10px 8px;
   }
 
   .header {
     display: flex; align-items: center;
-    margin-bottom: 16px; padding-bottom: 14px;
+    margin-bottom: 7px; padding-bottom: 6px;
     border-bottom: 1px solid rgba(148, 103, 255, 0.1);
   }
   .avatar {
-    width: 42px; height: 42px;
-    background: linear-gradient(135deg, #c084fc 0%, #8b5cf6 50%, #7c3aed 100%);
-    border-radius: 14px;
+    width: 28px; height: 28px;
+    background: linear-gradient(135deg, #ffd1dc 0%, #ffb6c1 50%, #f472b6 100%);
+    border-radius: 9px;
     display: flex; align-items: center; justify-content: center;
-    font-size: 23px;
-    box-shadow: 0 4px 16px rgba(139, 92, 246, 0.35);
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(244, 114, 182, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.9);
     flex-shrink: 0;
   }
-  .title-area { flex: 1; margin-left: 10px; }
-  .title { font-size: 13px; font-weight: 700; color: #1e1b4b; letter-spacing: -0.03em; }
-  .status { display: flex; align-items: center; gap: 5px; margin-top: 3px; }
+  .avatar-cat-img {
+    width: 26px; height: 26px;
+    object-fit: contain;
+    transform: scale(1.15) translateY(1px);
+  }
+  .title-area { flex: 1; margin-left: 7px; }
+  .title { font-size: 11.5px; font-weight: 700; color: #1e1b4b; letter-spacing: -0.03em; }
+  .status { display: flex; align-items: center; gap: 3.5px; margin-top: 1px; }
   .dot {
-    width: 7px; height: 7px; border-radius: 50%;
+    width: 5.5px; height: 5.5px; border-radius: 50%;
     background: #22c55e;
-    box-shadow: 0 0 8px rgba(34, 197, 94, 0.5);
+    box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
     animation: dotPulse 2s ease-in-out infinite;
   }
-  .dot.off { background: #ef4444; box-shadow: 0 0 8px rgba(239,68,68,0.5); animation: none; }
+  .dot.off { background: #ef4444; box-shadow: 0 0 6px rgba(239,68,68,0.5); animation: none; }
   @keyframes dotPulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(0.85)} }
-  .status-text { font-size: 10.5px; color: #6b7280; font-weight: 500; }
-  .hdr-actions { display: flex; gap: 5px; }
+  .status-text { font-size: 9.5px; color: #6b7280; font-weight: 500; }
+  .hdr-actions { display: flex; gap: 3px; }
   .hdr-btn {
-    width: 28px; height: 28px; border: none; border-radius: 9px;
+    width: 22px; height: 22px; border: none; border-radius: 7px;
     background: rgba(241, 245, 249, 0.85);
-    cursor: pointer; font-size: 12px;
+    cursor: pointer; font-size: 10px;
     display: flex; align-items: center; justify-content: center;
     transition: all 0.2s ease; color: #64748b;
   }
@@ -216,23 +222,23 @@ DOCK_HTML = r'''<!DOCTYPE html>
     color: white; box-shadow: 0 3px 10px rgba(124,58,237,0.35);
   }
 
-  .btns { display: flex; flex-direction: column; gap: 8px; }
+  .btns { display: flex; flex-direction: column; gap: 4.5px; }
   .ab {
-    display: flex; align-items: center; gap: 10px;
-    padding: 11px 14px; border: none; border-radius: 14px;
-    cursor: pointer; font-size: 12.5px; font-weight: 600;
+    display: flex; align-items: center; gap: 7px;
+    padding: 6.5px 9.5px; border: none; border-radius: 9px;
+    cursor: pointer; font-size: 11px; font-weight: 600;
     color: white; position: relative; overflow: hidden;
-    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
     letter-spacing: -0.01em;
   }
   .ab::before {
     content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0;
     background: linear-gradient(180deg, rgba(255,255,255,0.18) 0%, transparent 60%);
-    border-radius: 14px; pointer-events: none;
+    border-radius: 9px; pointer-events: none;
   }
-  .ab:hover { transform: translateY(-2px) scale(1.02); box-shadow: 0 6px 22px var(--sh); filter: brightness(1.06); }
+  .ab:hover { transform: translateY(-1.5px) scale(1.02); box-shadow: 0 5px 16px var(--sh); filter: brightness(1.06); }
   .ab:active { transform: translateY(0) scale(0.97); }
-  .ab .ic { font-size: 17px; flex-shrink: 0; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.15)); }
+  .ab .ic { font-size: 13.5px; flex-shrink: 0; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.15)); }
 
   .c1 { background: linear-gradient(135deg, #fb923c, #ea580c); --sh: rgba(249,115,22,0.4); }
   .c2 { background: linear-gradient(135deg, #fb7185, #e11d48); --sh: rgba(244,63,94,0.4); }
@@ -244,11 +250,11 @@ DOCK_HTML = r'''<!DOCTYPE html>
 
   .fb {
     display: flex; align-items: center; justify-content: center;
-    gap: 6px; width: 100%; padding: 10px; margin-top: 12px;
-    border: 1px solid rgba(148, 103, 255, 0.12); border-radius: 14px;
+    gap: 4px; width: 100%; padding: 5.5px; margin-top: 6px;
+    border: 1px solid rgba(148, 103, 255, 0.12); border-radius: 9px;
     background: rgba(248, 250, 252, 0.5);
     backdrop-filter: blur(8px);
-    cursor: pointer; font-size: 11.5px; font-weight: 600; color: #475569;
+    cursor: pointer; font-size: 10px; font-weight: 600; color: #475569;
     transition: all 0.2s ease;
   }
   .fb:hover { background: rgba(243,232,255,0.6); color: #7c3aed; border-color: rgba(124,58,237,0.25); transform: translateY(-1px); }
@@ -276,7 +282,9 @@ DOCK_HTML = r'''<!DOCTYPE html>
 <div id="card-view" class="hidden">
   <div class="card">
     <div class="header">
-      <div class="avatar">🐱</div>
+      <div class="avatar">
+        <img class="avatar-cat-img" src="__CAT_IMG_URI__" alt="小白" />
+      </div>
       <div class="title-area">
         <div class="title">Miaoshou Assistant</div>
         <div class="status">
@@ -358,19 +366,15 @@ function resetDragState() {
   }
 }
 
-document.addEventListener('mouseup', (e) => {
-  const moved = hasMoved;
-  resetDragState();
-  if (!moved && st === 'paw') {
-    showCard();
-  }
-});
+let isTransitioning = false;
 
-paw.addEventListener('click', (e) => {
-  if (!hasMoved && st === 'paw') {
+document.addEventListener('mouseup', (e) => {
+  if (e.button !== 0) return;
+  const wasDragging = hasMoved;
+  resetDragState();
+  if (!wasDragging && st === 'paw' && !isTransitioning) {
     showCard();
   }
-  hasMoved = false;
 });
 
 window.addEventListener('blur', resetDragState);
@@ -389,7 +393,9 @@ function sendCmd(action) {
 }
 
 function showPaw() {
+  if (st === 'paw' || isTransitioning) return;
   st = 'paw';
+  isTransitioning = true;
   isMouseDown = false;
   hasMoved = false;
   const paw = document.getElementById('paw-view');
@@ -397,10 +403,13 @@ function showPaw() {
   paw.classList.remove('hidden');
   document.getElementById('card-view').classList.add('hidden');
   callResize('paw');
+  setTimeout(() => { isTransitioning = false; }, 250);
 }
 
 function showCard() {
+  if (st === 'card' || isTransitioning) return;
   st = 'card';
+  isTransitioning = true;
   isMouseDown = false;
   hasMoved = false;
   const paw = document.getElementById('paw-view');
@@ -408,10 +417,11 @@ function showCard() {
   paw.classList.add('hidden');
   document.getElementById('card-view').classList.remove('hidden');
   callResize('card');
+  setTimeout(() => { isTransitioning = false; }, 250);
 }
 
 function setHover(hover) {
-  if (st === 'paw') {
+  if (st === 'paw' && !isTransitioning) {
     const paw = document.getElementById('paw-view');
     if (hover) {
       paw.classList.add('hovered');
@@ -490,7 +500,10 @@ class DockAPI:
             delattr(self, '_drag_start_wx')
 
     def sz(self, state):
+        if getattr(self, '_current_state', None) == state:
+            return
         self._current_state = state
+
         win = self._wh.get('win')
         if not win:
             return
@@ -499,23 +512,17 @@ class DockAPI:
         if not hasattr(self, '_paw_x'):
             sw, sh = _get_screen_size()
             self._paw_x = sw - 330
-            self._paw_y = sh // 2 - 48
+            self._paw_y = int(sh * 0.65) - 48
 
         try:
             if state == 'paw':
                 win.resize(330, 96)
                 win.move(self._paw_x, self._paw_y)
             else:
-                card_x = self._paw_x + 70
-                card_y = self._paw_y - 219
-                win.resize(260, 535)
+                card_x = self._paw_x + 94
+                card_y = self._paw_y - 120
+                win.resize(236, 335)
                 win.move(card_x, card_y)
-                try:
-                    import AppKit
-                    for w in AppKit.NSApp.windows():
-                        w.makeKeyAndOrderFront_(None)
-                except Exception:
-                    pass
         except Exception:
             pass
 
@@ -588,7 +595,7 @@ def _run_dock_process(parent_pid=None):
         '',
         html=html_content,
         width=330, height=96,
-        x=sw - 330, y=sh // 2 - 48,
+        x=sw - 330, y=int(sh * 0.65) - 48,
         resizable=False,
         frameless=True,
         transparent=True,

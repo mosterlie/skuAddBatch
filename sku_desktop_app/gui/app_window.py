@@ -29,7 +29,14 @@ class SkuAppGUI:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("跨境电商智能工作台 (1688采集 • 数据整理 • 妙手批量录入)")
-        self.root.geometry("880x720")
+        win_w, win_h = 880, 720
+        self.root.update_idletasks()
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        # 默认在屏幕右下方弹出，留出右边距与底部 Dock/任务栏边距
+        pos_x = max(20, sw - win_w - 40)
+        pos_y = max(40, sh - win_h - 75)
+        self.root.geometry(f"{win_w}x{win_h}+{pos_x}+{pos_y}")
         self.root.minsize(840, 620)
 
         # 核心控制器
